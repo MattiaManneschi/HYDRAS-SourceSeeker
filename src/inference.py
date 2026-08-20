@@ -1924,9 +1924,11 @@ def _find_velocity_run(trained_dir: Path, vmax: int, K: int) -> Optional[Path]:
             continue
         ag = c.get('agent', {})
         thr = c.get('environment', {}).get('reward', {}).get('distance_threshold', 50)
-        # Esclude esperimenti non-standard dalla catena normale: raggio ≠ 50 (r10) e
-        # doppia corona (sensor_range_2 presente) → non sovrascrivono i vmax_X.
-        if abs(float(thr) - 50.0) > 1e-6 or ag.get('sensor_range_2') is not None:
+        # Esclude esperimenti non-standard dalla catena normale: raggio ≠ 50 (r10),
+        # doppia corona (sensor_range_2 presente) e agente senza formazione
+        # (mask_formation) → non sovrascrivono i vmax_X.
+        if (abs(float(thr) - 50.0) > 1e-6 or ag.get('sensor_range_2') is not None
+                or ag.get('mask_formation', False)):
             continue
         if (int(ag.get('n_velocity_levels', 1)) == K
                 and abs(float(ag.get('max_velocity', 1.0)) - float(vmax)) < 1e-6):

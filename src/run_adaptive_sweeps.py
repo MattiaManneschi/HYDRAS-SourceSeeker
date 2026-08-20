@@ -25,6 +25,7 @@ Uso:
   STAGE=fcm_low python3 src/run_adaptive_sweeps.py  # sweep FCM basse velocità (lr 7/4/1) [solo inferenza]
   STAGE=dc_mid python3 src/run_adaptive_sweeps.py   # solo DOPPIA corona intermedi 1.2/1.5/1.7/1.9 (warm-start da single_vX) [TRAINING]
   STAGE=dc_low python3 src/run_adaptive_sweeps.py   # solo DOPPIA corona bassi 0.7/0.4/0.1 (serve prima STAGE=ppo_low) [TRAINING]
+  STAGE=noform python3 src/run_adaptive_sweeps.py   # agente SOLO senza formazione: 1 finetuning da SINGOLA corona v2 (mask_formation) [TRAINING]
 """
 import os
 import re
@@ -415,6 +416,7 @@ def _find_single_vmax_model(vmax, K: int = K_VELOCITY_LEVELS):
         if (int(ag.get('n_velocity_levels', 1)) == K
                 and abs(float(ag.get('max_velocity', 1.0)) - float(vmax)) < 1e-6
                 and ag.get('sensor_range_2') is None
+                and not ag.get('mask_formation', False)   # esclude i modelli no-formation
                 and abs(float(thr) - 50.0) < 1e-6):
             best = fm
     return best
@@ -510,6 +512,61 @@ class _Tee:
         return getattr(self._streams[0], name)
 
 
+NOFORM_VMAX = 2.0   # base per il no-formation: SINGOLA corona v2 (rimozione più contenuta e
+                    # interpretabile della doppia; velocità di crociera realistica).
+
+
+def noformation_experiment(vmax=NOFORM_VMAX):
+    """Agente 'solo' (senza formazione): UNA finetuning del modello SINGOLA corona v{vmax}
+    con i sensori direzionali AZZERATI (mask_formation=True). Si parte dalla singola corona
+    (8 sensori), non dalla doppia: la rimozione è più contenuta, il confronto 'formazione
+    vs nessuna formazione' è pulito, e il warm-start ha meno ingressi 'morti' (80 anziché
+    160) → adattamento migliore e gap più equo. L'architettura NON cambia (obs 116,
+    Discrete(40)) → resume_from dal modello con formazione, così il confronto è a parità di
+    tutto tranne la formazione. Per il capitolo Explainability (importanza della formazione:
+    ablation congelata vs riaddestramento). UNA sola finetuning; inferenza held-out dopo."""
+    base = _find_single_vmax_model(vmax)
+    if base is None:
+        print(f"  [SKIP] singola corona v{vmax:g} non trovata (serve come base per il no-formation).",
+              flush=True)
+        return [("no-formation", "no-base", 0.0)]
+
+    cfg = load_config(BASE_CONFIG)
+    cfg['agent']['n_velocity_levels'] = K_VELOCITY_LEVELS
+    cfg['agent']['max_velocity'] = float(vmax)
+    cfg['agent']['sensor_range'] = 20
+    cfg['agent'].pop('sensor_range_2', None)       # SINGOLA corona (obs 116, forma invariata)
+    cfg['agent']['mask_formation'] = True           # <-- azzera i sensori della formazione
+    cfg.setdefault('training', {})['target_kl'] = 0.02
+    cfg['training'].pop('lr_schedule', None)
+    cfg['training']['learning_rate'] = DC_LR
+    cfg['training']['scenario_curriculum'] = [{'end': DC_TIMESTEPS, 'alpha': FINETUNE_ALPHA}]
+    cfg['training']['eval_scenarios'] = []         # eval OFF; inferenza held-out dopo, separata
+    rew = cfg.setdefault('environment', {}).setdefault('reward', {})
+    rew['distance_threshold'] = 50
+    rew['stagnation_distance_threshold'] = 20.0
+
+    cfg_path = str(ROOT / "utils" / "config" / f"config_noformation_v{vmax:g}.yaml")
+    with open(cfg_path, 'w') as f:
+        yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
+
+    _banner(f"  [AGENTE SOLO (no-formation) v{vmax:g}]  finetuning da SINGOLA corona, formazione azzerata")
+    print(f"    base       : {base}")
+    print(f"    sensori    : AZZERATI (mask_formation=True) — restano conc. propria, memorie, vento/corrente")
+    print(f"    lr         : {DC_LR:g}   |   α: {FINETUNE_ALPHA:g}   |   timesteps: {DC_TIMESTEPS:,}", flush=True)
+
+    t0 = time.time()
+    _, run_dir = train(
+        config_path=cfg_path, output_dir=str(ROOT / "trained_models"),
+        n_envs=N_ENVS, total_timesteps=DC_TIMESTEPS, seed=42,
+        data_dir=DATA_DIR, resume_from=str(base),
+    )
+    model_path = str(run_dir / "models" / "final_model.zip")
+    print(f"\n  ✓ agente solo (no-formation) addestrato  ({_fmt_dt(time.time()-t0)})\n"
+          f"    modello: {model_path}", flush=True)
+    return [("no-formation", "addestrato", time.time() - t0)]
+
+
 def run_prof_training_sequence():
     """Sequenza COMPLETA richiesta dal prof, AUTOMATICA e CONSECUTIVA (finito uno parte l'altro):
       1) SINGOLA corona basse velocità: catena discendente v1 -> 0.7 -> 0.4 -> 0.1
@@ -577,6 +634,7 @@ def main():
         "dc2":     "Doppia corona a ogni v_max (opzione 2)",
         "dc_mid":  "Doppia corona INTERMEDI (1.2/1.5/1.7/1.9, warm-start da single_vX)",
         "dc_low":  "Doppia corona BASSI (0.7/0.4/0.1, warm-start da single_vX)",
+        "noform":  "Agente SOLO (no-formation): finetuning singola corona v2, formazione azzerata",
         "prof":    "SEQUENZA PROF: 1) singola 0.7/0.4/0.1  2) doppia 0.7/0.4/0.1  3) doppia 1.2/1.5/1.7/1.9",
     }
     _banner("  SWEEP ADATTIVI   (spawn distribuito, no video)", "#")
@@ -629,6 +687,10 @@ def main():
     if stage == "dc_low":
         _banner("  ###  DOPPIA CORONA v_max BASSI (0.7/0.4/0.1, warm-start da single_vX)  ###", "#")
         ppo_res = dualcorona_chain_experiment(vmax_list=DC_LOW_VMAX)
+
+    if stage == "noform":
+        _banner("  ###  AGENTE SOLO (NO-FORMATION): finetuning singola corona v2, sensori azzerati  ###", "#")
+        ppo_res = noformation_experiment()
 
     if stage == "prof":
         ppo_res = run_prof_training_sequence()

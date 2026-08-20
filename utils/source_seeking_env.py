@@ -99,6 +99,14 @@ class SourceSeekingConfig:
     sensor_range: float = 20.0
     sensor_range_2: Optional[float] = None  # seconda corona di sensori; None = disabilitata (116-dim obs)
 
+    # "Agente solo" (senza formazione): azzera i sensori direzionali della formazione
+    # (correnti + storia), lasciando all'agente solo la concentrazione nella propria
+    # posizione, le memorie, il vento/corrente e le feature posizionali. Serve
+    # all'esperimento sull'importanza della formazione (Cap. Explainability). La forma
+    # dell'osservazione NON cambia (i canali sono azzerati), così il modello resta
+    # warm-startabile da uno addestrato con la formazione.
+    mask_formation: bool = False
+
     @classmethod
     def from_config(cls, config: dict, chunk_id: int = 0) -> 'SourceSeekingConfig':
         """Costruisce SourceSeekingConfig da un dict YAML (output di yaml.safe_load)."""
@@ -119,6 +127,7 @@ class SourceSeekingConfig:
             n_velocity_levels=agent.get('n_velocity_levels', 1),
             sensor_range=float(agent.get('sensor_range', 20.0)),
             sensor_range_2=float(agent['sensor_range_2']) if 'sensor_range_2' in agent else None,
+            mask_formation=bool(agent.get('mask_formation', False)),
             dt=env.get('dt', 10),
             max_steps=env.get('max_episode_steps', 1080),
             chunk_id=chunk_id,
@@ -616,7 +625,14 @@ class SourceSeekingEnv(gym.Env):
         # Feature 4: step dall'ultimo contatto col plume (normalizzato)
         obs.append(float(self._steps_since_plume_contact) / self.config.max_steps)
 
-        return np.array(obs, dtype=np.float32)
+        obs = np.array(obs, dtype=np.float32)
+        if self.config.mask_formation:
+            # "Agente solo": azzera i sensori della formazione (correnti + storia).
+            # I primi 28 valori (conc. propria + 9 conc. passate + 9 spostamenti) e gli
+            # ultimi 8 (vento, corrente, feature posizionali) restano intatti; tutto ci\`o
+            # che sta in mezzo sono i sensori direzionali (singola o doppia corona).
+            obs[28:-8] = 0.0
+        return obs
 
     def _compute_directional_sensors(self, sensor_range: float = None) -> List[float]:
         """Calcola 8 sensori di concentrazione direzionali al raggio dato.
