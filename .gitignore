@@ -42,6 +42,7 @@ venv/
 # Large model checkpoints (keep only final models for repo)
 trained_models/**/checkpoints/
 evaluations/
+extra_noformation/
 
 # LaTeX auxiliary files
 *.aux
