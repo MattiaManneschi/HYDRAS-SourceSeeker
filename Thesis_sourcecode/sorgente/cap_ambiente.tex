@@ -1,0 +1,375 @@
+\chapter{Composizione dell'ambiente}
+\label{cap:ambiente}
+
+A partire dai dati descritti nel Capitolo~\ref{cap:dati}, questo capitolo illustra
+l'\textbf{ambiente di simulazione} vero e proprio: l'interfaccia software che trasforma i
+campi idrodinamici in un problema di controllo sequenziale, la struttura della squadra di
+agenti, lo spazio delle azioni, i vincoli di navigazione, la procedura di inizializzazione
+e il segnale di reward. Si tratta dell'infrastruttura \textbf{condivisa} dai due approcci
+confrontati nella tesi: sia il metodo del gradiente (Capitolo~\ref{cap:fcm}) sia l'agente
+PPO (Capitolo~\ref{cap:rl}) operano su questo stesso ambiente, con la stessa dinamica e
+gli stessi vincoli. L'unica differenza risiede nel modulo che, ricevuta l'osservazione,
+sceglie l'azione: una regola analitica nel primo caso, una rete neurale addestrata nel
+secondo.
+
+\section{L'ambiente software}
+\label{sec:env}
+
+L'ambiente \`e implementato dalla classe \texttt{SourceSeekingEnv} secondo l'interfaccia
+standard \texttt{gymnasium.Env}. Esso riceve in ingresso un \texttt{ConcentrationField}
+(con i relativi \texttt{WindData} e \texttt{CurrentData}), oppure un \texttt{DataManager}
+da cui estrarre dinamicamente un campo casuale ad ogni episodio --- modalit\`a usata in
+addestramento per variare di continuo sorgente e scenario. Il dominio \`e la griglia
+regolare $300 \times 250$ celle a passo $10\,\text{m}$ ($3 \times 2{,}5\,\text{km}$)
+descritta nella Sezione~\ref{sec:sorgenti}.
+
+L'oggetto ambiente viene quindi incapsulato in una catena di \emph{wrapper}:
+\begin{itemize}
+    \item un \texttt{ActionMasker} che applica l'action masking
+          (Sezione~\ref{sec:masking}), escludendo le azioni non ammissibili;
+    \item un \emph{vettorizzatore} (\texttt{DummyVecEnv}) che uniforma l'interfaccia a
+          quella attesa dalla libreria di RL;
+    \item per il solo addestramento RL, un \texttt{VecNormalize} che normalizza le
+          osservazioni con media e varianza stimate online.
+\end{itemize}
+
+\begin{lstlisting}
+raw = SourceSeekingEnv(config, concentration_field=field,
+                       wind_data=wind, current_data=current)
+env = ActionMasker(raw, mask_fn)               # masking delle azioni
+env = DummyVecEnv([lambda: env])               # vettorizzazione
+env = VecNormalize(env, norm_reward=False)     # solo per il training RL
+\end{lstlisting}
+
+\subsection{Architettura master--slave}
+\label{sec:master_slave}
+
+Il sistema \`e organizzato come una \textbf{squadra di agenti} in formazione
+\emph{master--slave}. L'agente \textbf{master} \`e l'unico a decidere il movimento e a
+spostarsi attivamente sul dominio; attorno ad esso, otto agenti \textbf{slave}
+mantengono una formazione rigida (Figura~\ref{fig:formazione}), posizionandosi a distanza
+$r_s$ (il \emph{sensor range}) lungo le otto direzioni cardinali e diagonali $\hat{d}_i$ (N, S, E, O, NE, SE,
+NO, SO). Ciascuno slave campiona la concentrazione del contaminante nella propria
+posizione $\mathbf{p} + r_s\,\hat{d}_i$ e la riporta al master, senza alcuna autonomia
+decisionale propria: il loro unico compito \`e fornire le misurazioni e conservare la
+formazione rispetto al master mentre questo si muove.
+
+Le otto misurazioni degli slave, insieme alla lettura del master nella posizione
+centrale, costituiscono l'informazione locale sul campo di concentrazione su cui si
+basano entrambi gli approcci. Nel metodo del gradiente tali letture vengono usate per
+stimare il gradiente locale; nell'approccio RL confluiscono nello spazio di osservazione
+della rete neurale che governa il master. Le posizioni degli slave e il relativo
+campionamento si esprimono come:
+
+\begin{lstlisting}
+DIAG = 1 / np.sqrt(2)
+DIRECTIONS = np.array([(0,1),(0,-1),(1,0),(-1,0),          # N, S, E, O
+                       (DIAG,DIAG),(DIAG,-DIAG),
+                       (-DIAG,DIAG),(-DIAG,-DIAG)])         # diagonali
+# ogni slave campiona a distanza r_s lungo la propria direzione
+readings = [field.get_concentration(*(master_pos + r_s * d)) for d in DIRECTIONS]
+\end{lstlisting}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,
+  slave/.style={circle, draw, fill=blue!14, minimum size=6.5mm, inner sep=0pt},
+  master/.style={circle, draw, fill=orange!75, minimum size=9mm, inner sep=0pt},
+  link/.style={-, gray, densely dashed}
+]
+  \def\R{2.3}
+  \draw[gray!45, densely dotted] (0,0) circle (\R);
+  \foreach \a/\lab in {90/N, 270/S, 0/E, 180/O, 45/NE, 315/SE, 135/NO, 225/SO} {
+    \draw[link] (0,0) -- (\a:\R);
+    \node[slave] at (\a:\R) {\scriptsize S};
+    \node[gray!60!black] at (\a:{\R+0.42}) {\lab};
+  }
+  \node[master] (m) at (0,0) {\scriptsize M};
+  \draw[{Latex}-{Latex}, thick] (0,0) -- (20:\R)
+       node[midway, above, sloped, fill=white, inner sep=1pt]{$r_s$};
+\end{tikzpicture}
+\caption{Formazione master--slave. L'agente \textbf{master} (M, arancio) occupa il centro;
+         otto agenti \textbf{slave} (S, blu) sono disposti a distanza $r_s$ (il \emph{sensor
+         range}) lungo le direzioni cardinali e diagonali. Ogni slave campiona la
+         concentrazione nella propria posizione e la riporta al master; le stesse otto
+         direzioni sono anche le azioni di movimento disponibili.}
+\label{fig:formazione}
+\end{figure}
+
+Questa unica corona di 8 sensori \`e la configurazione base (\emph{singola corona}); il
+Capitolo~\ref{cap:rl} valuta anche una variante a \textbf{doppia corona} che aggiunge una
+seconda formazione di 8 slave a $r_{s2} = 50\,\text{m}$, per dare al master informazione
+sul plume a scala spaziale pi\`u larga.
+
+\subsection{Spazio delle azioni e dinamica dell'episodio}
+\label{sec:dinamica}
+
+Il master si muove con uno spazio delle azioni discreto a \textbf{8 direzioni}
+(le stesse $\hat{d}_i$ della formazione), con velocit\`a nominale di $1\,\text{m/s}$ e
+passo temporale $\Delta t = 10\,\text{s}$, spostandosi quindi di $10\,\text{m}$ per
+azione (o $\sim$7\,m per componente nelle direzioni diagonali). Ogni episodio ha durata
+massima di 1080 step ($= 3\,\text{h}$ di tempo simulato) e termina con \textbf{successo}
+quando il master raggiunge la sorgente (distanza $\leq 50\,\text{m}$). Il campo di
+concentrazione evolve durante l'episodio: ogni alcuni step dell'agente il campo MIKE21
+avanza di un frame temporale, mantenendo vento e correnti sincronizzati. La conversione
+azione\,$\to$\,spostamento \`e immediata:
+
+\begin{lstlisting}
+ACTION_MAP = {0:(0,1), 1:(0,-1), 2:(1,0), 3:(-1,0),       # N, S, E, O
+              4:(DIAG,DIAG), 5:(DIAG,-DIAG),
+              6:(-DIAG,DIAG), 7:(-DIAG,-DIAG)}            # diagonali
+dx, dy = ACTION_MAP[action]
+step = max_velocity * dt                  # 1 m/s * 10 s = 10 m
+master_pos += np.array([dx, dy]) * step
+\end{lstlisting}
+
+Questo spazio d'azione a passo fisso \`e il punto di partenza; il Capitolo~\ref{cap:rl} lo
+estende a \textbf{velocit\`a variabile} rendendo la velocit\`a stessa una scelta
+dell'agente (spazio $\text{Discrete}(8\times K)$), cos\`i che il master decida a ogni passo
+non solo la direzione ma anche l'entit\`a dello spostamento.
+
+\subsection{Action masking}
+\label{sec:masking}
+
+Per impedire le collisioni con la costa, l'ambiente calcola ad ogni passo una
+\emph{maschera} delle azioni: le direzioni che porterebbero il master sulla terraferma o
+fuori dal dominio vengono escluse dall'insieme delle azioni ammissibili. Questo
+meccanismo, sfruttato sia dal metodo del gradiente sia dall'agente RL, garantisce che
+vengano percorse soltanto traiettorie valide senza dover penalizzare a posteriori le
+azioni non consentite.
+
+\begin{lstlisting}
+def action_masks(self):
+    masks = np.ones(8, dtype=bool)
+    step = self.max_velocity * self.dt
+    for a, (dx, dy) in ACTION_MAP.items():
+        nx, ny = self.x + dx*step, self.y + dy*step
+        if out_of_domain(nx, ny) or self.field.is_land(nx, ny):
+            masks[a] = False                  # azione invalida
+    return masks
+\end{lstlisting}
+
+La maschera \`e costruita a partire dalla \emph{land mask} del campo e dalla mappa delle
+distanze dalla costa precalcolata via \emph{Euclidean Distance Transform} (EDT,
+Sezione~\ref{sec:dataloader}): la stessa mappa fornisce anche la penalit\`a di prossimit\`a
+alla terra usata nel segnale di reward (Sezione~\ref{sec:reward}).
+
+\subsection{Inizializzazione dell'agente}
+\label{sec:spawn}
+
+Il master viene inizializzato su una cella appartenente al plume (concentrazione
+$c \geq 0{,}5$), a distanza dalla costa $\geq 50\,\text{m}$ e a una distanza dalla
+sorgente controllata. Nel corso del progetto si sono succeduti \textbf{due algoritmi di
+spawn}, e quale dei due sia in uso dipende dalla fase di lavoro: gli addestramenti iniziali
+(a velocit\`a fissa) adottano una \emph{cascata di anelli} a soglie fisse, mentre a partire
+dall'analisi a velocit\`a variabile (Sezione~\ref{sec:rl_velocity}) si passa a un
+\emph{disco adattivo} $[d_{\min},d_{\max}]$ con campionamento uniforme in distanza. Vanno
+descritti entrambi perch\'e coesistono nei risultati riportati: ogni modello eredita
+l'algoritmo in vigore quando \`e stato addestrato, e i confronti fra modelli tengono conto
+di questa differenza.
+
+\paragraph{Primo algoritmo (addestramenti a velocit\`a fissa): cascata di anelli.}
+La procedura iniziale (Figura~\ref{fig:spawn_cascade}) scandisce una lista di anelli in
+ordine decrescente di distanza dalla sorgente, restituendo una cella a caso del
+\emph{primo anello non vuoto}:
+\begin{center}
+$(2000\text{--}2500) \to (1500\text{--}2000) \to (1000\text{--}1500) \to
+(500\text{--}1000) \to (250\text{--}500) \to (50\text{--}250) \to (0\text{--}50)\;\text{m}$
+\end{center}
+Per ogni anello vengono selezionate le celle con $c \geq 0{,}5$ e distanza dalla terra
+$\geq 50\,\text{m}$; la cascata scende all'anello successivo solo se nessuna cella del
+corrente soddisfa entrambe le condizioni. La distanza iniziale media di spawn risulta di
+circa $800\,\text{m}$.
+
+\begin{lstlisting}
+CASCADE = [(2000,2500),(1500,2000),(1000,1500),
+           (500,1000),(250,500),(50,250),(0,50)]
+for dmin, dmax in CASCADE:                    # dal piu' lontano al piu' vicino
+    cells = plume_cells[(dist >= dmin) & (dist <= dmax) & (land_dist >= 50)]
+    if len(cells):
+        return random.choice(cells)           # primo anello non vuoto
+\end{lstlisting}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[font=\footnotesize]
+  % anelli concentrici (1 unita' = 500 m); disegnati dal piu' grande al piu' piccolo
+  \foreach \r/\col in {5/blue!22, 4/blue!18, 3/blue!14, 2/blue!11, 1/blue!8, 0.5/blue!5}{
+    \fill[\col] (0,0) circle (\r);
+  }
+  \foreach \r in {0.1,0.5,1,2,3,4,5}{ \draw[gray!55] (0,0) circle (\r); }
+  % sorgente
+  \node[star, star points=5, fill=yellow, draw, minimum size=5mm, inner sep=0pt] at (0,0) {};
+  % etichette distanze (m) sull'asse
+  \foreach \r/\d in {0.5/250, 1/500, 2/1000, 3/1500, 4/2000, 5/2500}{
+    \node[fill=white, inner sep=0.8pt, font=\scriptsize] at (\r,0) {\d};
+  }
+  % freccia: ordine di selezione dal piu' lontano al piu' vicino
+  \draw[-{Latex[length=2.4mm]}, thick, orange!85!black] (4.6,0.55) to[bend right=12] (0.9,0.55);
+  \node[orange!70!black, align=center, font=\scriptsize] at (2.7,1.35)
+       {ordine di selezione\\(dal pi\`u lontano)};
+\end{tikzpicture}
+\caption{Cascata di anelli concentrici per l'inizializzazione. Il master \`e collocato in
+         un anello attorno alla sorgente ($\star$), partendo dal pi\`u lontano
+         ($2000$--$2500\,\text{m}$) e scendendo verso i pi\`u vicini solo se nessuna cella
+         dell'anello corrente soddisfa i vincoli (concentrazione $\geq 0{,}5$, distanza dalla
+         terra $\geq 50\,\text{m}$). Le distanze sono in metri dalla sorgente.}
+\label{fig:spawn_cascade}
+\end{figure}
+
+\textbf{Pro.} Lo schema \`e semplice e deterministico nell'ordinamento, e privilegia in modo
+naturale gli spawn lontani: con plume esteso l'agente parte quasi sempre dal bordo esterno,
+affrontando il compito nella sua versione pi\`u difficile e informativa.
+\textbf{Contro.} Restituendo sempre il \emph{primo} anello popolato, gli spawn si
+\textbf{addensano quasi tutti alla stessa distanza} (l'anello esterno del plume del
+momento): la distribuzione della distanza iniziale \`e di fatto degenere e copre male
+l'intervallo intermedio. Le soglie sono inoltre \emph{fisse}, e non si adattano a plume
+pi\`u compatti o pi\`u diffusi del previsto.
+
+\paragraph{Secondo algoritmo (dall'analisi a velocit\`a variabile): disco adattivo $[d_{\min},\,d_{\max}]$.}
+Per distribuire i punti di partenza su tutto l'intervallo utile, la versione definitiva
+costruisce un \emph{disco di spawn} $[d_{\min},\,d_{\max}]$ che si adatta allo scenario e
+campiona in modo \textbf{uniforme rispetto alla distanza} (Figura~\ref{fig:spawn_disk}).
+Detto $\{d_i\}$ l'insieme delle distanze dalla sorgente delle celle di plume ammissibili
+($c \geq 0{,}5$, distanza dalla terra $\geq 50\,\text{m}$):
+\begin{itemize}
+  \item $d_{\max} = \min\!\big(3000\,\text{m},\ \max_i d_i\big)$: il tetto di $3\,\text{km}$,
+        abbassato all'estensione massima del plume quando questo non arriva cos\`i lontano;
+  \item $d_{\min} = \max\!\big(300\,\text{m},\ \mathrm{perc}_{50}(\{d_i\})\big)$: la mediana
+        delle distanze delle celle di plume, con un \emph{floor} assoluto a $300\,\text{m}$.
+        Cos\`i $d_{\min}$ \textbf{scala con la diffusione del plume}: plume molto esteso
+        $\Rightarrow$ celle lontane $\Rightarrow$ mediana alta $\Rightarrow$ $d_{\min}$ alta;
+        plume compatto $\Rightarrow$ $d_{\min}$ bassa (una soglia alta sarebbe
+        irraggiungibile). Il floor evita gli spawn gi\`a dentro il raggio di successo, tranne
+        quando l'intero plume \`e pi\`u piccolo del floor stesso, nel qual caso il disco si
+        restringe alla sua estensione;
+  \item se $d_{\max}-d_{\min} < 500\,\text{m}$ si abbassa $d_{\min}$ (fino al floor) per
+        garantire un intervallo abbastanza ampio da non far ripartire tutti gli agenti dalla
+        stessa distanza.
+\end{itemize}
+Si estrae quindi una distanza obiettivo $d^\star \sim \mathcal{U}(d_{\min},\,d_{\max})$ e si
+sceglie a caso una cella valida entro $\pm 50\,\text{m}$ da $d^\star$ (con piccolo jitter),
+ripetendo finch\'e i vincoli di dominio, concentrazione e distanza dalla costa sono
+soddisfatti. Campionando in modo uniforme $d^\star$, gli spawn si \textbf{spalmano su tutto}
+$[d_{\min},\,d_{\max}]$ invece di concentrarsi sull'anello esterno.
+
+\begin{lstlisting}
+d = dist_from_source(plume_cells)          # celle con c>=0.5 e land>=50 m
+d_disk = d[d <= 3000]                       # tetto d_cap = 3 km
+d_max  = min(3000, d_disk.max())
+d_min  = max(300, percentile(d_disk, 50))   # mediana, floor 300 m
+if d_max - d_min < 500:                      # ampiezza minima dell'intervallo
+    d_min = max(300, d_max - 500)
+target = uniform(d_min, d_max)               # UNIFORME in distanza
+band   = plume_cells[abs(d_disk - target) <= 50]   # cella entro +-50 m
+return random.choice(band)                   # (con jitter +-5 m)
+\end{lstlisting}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[font=\footnotesize]
+  % 1 unita' = 500 m; disco esterno d_max, foro interno d_min
+  \fill[blue!10] (0,0) circle (4.2);
+  \fill[white]   (0,0) circle (1.5);
+  \draw[dashed, thick, blue!55!black] (0,0) circle (1.5);
+  \draw[dashed, thick, blue!55!black] (0,0) circle (4.2);
+  % spawn estratti uniformemente in distanza nell'anello [d_min, d_max]
+  \foreach \a/\r in {18/1.8, 52/3.5, 88/2.4, 124/3.9, 158/2.0, 196/3.2, 228/2.7,
+                     262/4.0, 298/1.7, 332/3.0, 8/3.6, 72/2.9, 140/1.6, 210/2.3,
+                     280/3.4, 350/2.6}{
+    \fill[orange!85!black] (\a:\r) circle (1.6pt);
+  }
+  \node[star, star points=5, fill=yellow, draw, minimum size=5mm, inner sep=0pt] at (0,0) {};
+  \draw[-{Latex[length=2mm]}, gray!65] (0,0) -- (68:1.5)
+       node[pos=0.6, sloped, above, font=\scriptsize] {$d_{\min}$};
+  \draw[-{Latex[length=2mm]}, gray!65] (0,0) -- (255:4.2)
+       node[pos=0.72, sloped, below, font=\scriptsize] {$d_{\max}$};
+\end{tikzpicture}
+\caption{Disco di spawn adattivo $[d_{\min},d_{\max}]$ (versione adottata). $d_{\max}$ \`e il
+         tetto di $3\,\text{km}$ ridotto all'estensione del plume; $d_{\min}$ \`e la mediana
+         delle distanze delle celle di plume (\emph{floor} $300\,\text{m}$) e scala con la
+         diffusione. I punti di partenza (arancioni) sono estratti in modo \emph{uniforme
+         rispetto alla distanza} nell'anello, coprendo l'intero intervallo anzich\'e
+         addensarsi sul bordo esterno.}
+\label{fig:spawn_disk}
+\end{figure}
+
+\textbf{Pro.} Il disco \`e \emph{adattivo} (si ridimensiona con l'estensione del plume) e
+distribuisce gli spawn in modo uniforme su tutto $[d_{\min},d_{\max}]$: la distanza iniziale
+copre l'intero intervallo, rendendo il confronto fra modelli pi\`u equo e statisticamente
+pi\`u solido. Il floor a $300\,\text{m}$ e l'ampiezza minima mantengono comunque il compito
+non banale, senza inizializzazioni gi\`a prossime al bersaglio.
+\textbf{Contro.} La logica \`e pi\`u complessa (percentile, banda di tolleranza, fallback),
+e la distanza tipica di partenza non \`e un valore fisso ma dipende dalla mediana delle celle
+di plume del singolo scenario, quindi varia da caso a caso. Soprattutto, campionando in modo
+uniforme su $[d_{\min},d_{\max}]$, l'agente pu\`o partire anche da \textbf{distanze brevi}
+(prossime a $d_{\min}$), mentre la cascata sceglieva sempre il punto valido pi\`u lontano:
+alcuni episodi risultano quindi mediamente pi\`u facili rispetto al primo algoritmo.
+
+\paragraph{Perch\'e il passaggio, e quale algoritmo usa cosa.}
+Con la velocit\`a fissa la cascata era adeguata: il compito era gi\`a difficile e la distanza
+di partenza, pur concentrata, risultava paragonabile fra episodi. Introducendo la
+\textbf{velocit\`a variabile} (Sezione~\ref{sec:rl_velocity}) il confronto avviene per\`o
+\emph{fra} modelli e \emph{fra} velocit\`a massime diverse: una distribuzione di spawn
+degenere avrebbe reso i confronti sensibili al particolare anello estratto pi\`u che alla
+reale capacit\`a dell'agente. Il disco adattivo, uniforme in distanza e indipendente dalla
+forma istantanea del plume, offre una base di valutazione controllata e riproducibile. In
+pratica: i modelli a \textbf{velocit\`a fissa} dei primi esperimenti usano la
+\textbf{cascata}; tutti i modelli e le analisi a \textbf{velocit\`a variabile} --- l'intero
+range di velocit\`a (Sezione~\ref{sec:rl_velocity}), i $v_{\max}$ intermedi, il confronto fra
+corona singola e doppia e il test a singolo agente senza formazione --- usano il
+\textbf{disco adattivo}.
+
+L'analisi delle \emph{spawn map} (Sezione~\ref{sec:spawn_map}) verifica infine, per il disco,
+che l'esito di un episodio non dipenda dalla particolare posizione di partenza.
+
+\section{Il segnale di reward}
+\label{sec:reward}
+
+Oltre a osservazione e dinamica, l'ambiente calcola ad ogni passo un \textbf{segnale di
+reward} scalare $r_t$. Esso \`e usato \emph{unicamente} dall'agente RL, che ne massimizza
+il ritorno atteso in fase di addestramento (Capitolo~\ref{cap:rl}); il metodo del gradiente
+lo ignora, poich\'e decide l'azione analiticamente dalle sole letture correnti. Nella sua
+forma finale, adottata come riferimento, il reward combina un piccolo insieme di segnali
+essenziali:
+\begin{equation}
+    r_t = \underbrace{r^{\text{reach}}_t}_{+100\ \text{a successo}}
+        \;+\; \underbrace{r^{\text{dist}}_t}_{\text{avvicinamento}}
+        \;+\; \underbrace{r^{\text{grad}}_t}_{\pm 0{,}05}
+        \;+\; \underbrace{r^{\text{time}}_t}_{-0{,}1/\text{step}}
+        \;+\; \underbrace{r^{\text{land}}_t}_{\text{costa}}
+        \;+\; \underbrace{r^{\text{bound}}_t}_{-10\ \text{fuori dominio}}
+    \label{eq:reward}
+\end{equation}
+dove: $r^{\text{reach}}_t = +100$ (pi\`u un piccolo bonus per l'arrivo anticipato) premia il
+raggiungimento della sorgente; $r^{\text{dist}}_t$
+\`e proporzionale alla \emph{riduzione} di distanza dalla sorgente nel passo (reward di
+distanza lineare); $r^{\text{grad}}_t = \pm 0{,}05$ premia il muoversi lungo il gradiente
+crescente di concentrazione; $r^{\text{time}}_t = -0{,}1$ per step incentiva a raggiungere
+la sorgente rapidamente; $r^{\text{land}}_t$ penalizza la prossimit\`a eccessiva alla costa
+(via la mappa EDT); $r^{\text{bound}}_t = -10$ penalizza l'uscita dal dominio. In codice, il
+reward si assembla ad ogni passo come somma di questi contributi:
+
+\begin{lstlisting}
+def _compute_reward(self):
+    r = 0.0
+    if self._source_reached():                    # 1) raggiungimento (+ bonus di tempo)
+        r += 100.0 + max(0, (N_max - k) / N_max * 50)
+    if self._out_of_bounds():                     # 2) uscita dal dominio
+        r += -10.0
+    r += (prev_dist - curr_dist) * K_dist          # 3) distanza (lineare)
+    r += 0.05 if conc > prev_conc else -0.05       # 4) gradiente di concentrazione
+    r += -0.1                                       # 5) penalita' di tempo (per step)
+    r += land_proximity_penalty(land_dist)         # 6) prossimita' alla costa (EDT)
+    return r
+\end{lstlisting}
+
+La scelta di questa forma \emph{minimale} non \`e a priori: \`e il risultato di uno studio
+di ablation (Sezione~\ref{sec:rl_reward}) che ha confrontato varianti pi\`u ricche ---
+con reward di allineamento a vento e corrente, distanza quadratica, \emph{zone multiplier},
+\emph{retreat asymmetry} e penalit\`a di stagnazione --- mostrando che i segnali aggiuntivi
+non migliorano, e in alcuni casi peggiorano, le prestazioni. Il gradiente di concentrazione,
+calcolato direttamente sul campo simulato, incorpora gi\`a implicitamente l'effetto di vento
+e corrente.
+

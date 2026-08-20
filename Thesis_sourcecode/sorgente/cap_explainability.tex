@@ -1,0 +1,587 @@
+\chapter{Explainability della politica appresa}
+\label{cap:xai}
+
+\section{Motivazione}
+\label{sec:xai_motivazione}
+
+Il Capitolo~\ref{cap:rl} stabilisce \emph{che} la politica funziona: sul protocollo
+held-out il modello a doppia corona con $v_{\max}=2\,$m/s risolve il 99{,}7\% degli
+episodi. Non dice per\`o \emph{perch\'e} funzioni, n\'e su quale parte delle 196
+dimensioni dell'osservazione si regga. \`E una lacuna che conta in un contesto
+operativo: sapere quali grandezze la politica sfrutta davvero significa sapere quali
+sensori sono indispensabili a bordo del veicolo, quali sono ridondanti e quali
+degradazioni sensoristiche la missione tollera.
+
+Il capitolo separa due domande che la letteratura tende a confondere:
+
+\begin{itemize}[leftmargin=1.4em, itemsep=2pt]
+  \item \textbf{Che cosa la rete guarda} --- quali blocchi dell'osservazione
+        influenzano l'uscita della politica. \`E una domanda \emph{osservazionale}
+        sulla funzione appresa, e si risponde con l'attribuzione
+        (Sezione~\ref{sec:xai_shapley}).
+  \item \textbf{Che cosa serve al compito} --- quali blocchi, se rimossi, degradano
+        la prestazione. \`E una domanda \emph{causale} sul task, e si risponde con
+        un intervento (Sezione~\ref{sec:xai_ablation}).
+\end{itemize}
+
+Le due domande non hanno la stessa risposta, e il punto interessante \`e proprio
+dove divergono: una feature pu\`o avere attribuzione alta e impatto nullo perch\'e
+ridondante rispetto ad altre, oppure attribuzione modesta ed effetto grande perch\'e
+non sostituibile da nessun'altra. Il capitolo si chiude
+(Sezione~\ref{sec:xai_sintesi}) mettendo a confronto le due letture.
+
+\section{Metodi post-hoc: rassegna e criterio di scelta}
+\label{sec:xai_rassegna}
+
+Lo strumentario standard dell'explainability post-hoc model-agnostic \`e essenzialmente
+duplice. \textbf{LIME}~\cite{lime} approssima il modello nell'intorno di una singola
+predizione con un surrogato lineare sparso, stimato su perturbazioni del punto pesate
+da un kernel di prossimit\`a. \textbf{SHAP}~\cite{shap} riconduce invece un'intera
+famiglia di metodi al \emph{valore di Shapley}~\cite{shapley1953} della teoria dei
+giochi cooperativi: le feature sono i giocatori, la predizione \`e il payoff da
+ripartire, e il valore di Shapley \`e l'unica ripartizione che soddisfa gli assiomi di
+efficienza, simmetria, dummy e additivit\`a. Accanto a questi si colloca la famiglia
+delle attribuzioni basate sul gradiente, di cui gli \emph{Integrated
+Gradients}~\cite{integrated_gradients} sono il rappresentante assiomatico.
+
+\`E importante distinguere due livelli che il nome ``SHAP'' tende a sovrapporre: il
+valore di Shapley \`e il \emph{concetto}, mentre KernelSHAP, DeepSHAP e TreeSHAP sono
+\emph{stimatori} di quel valore, resi necessari dal fatto che il numero di coalizioni
+cresce come $2^n$ nel numero $n$ di giocatori. La distinzione \`e decisiva per il
+seguito.
+
+Nel contesto di questa tesi l'applicazione meccanica di questi strumenti sarebbe
+inadeguata, per tre ragioni.
+
+\paragraph{Granularit\`a e collinearit\`a.} L'osservazione non \`e un insieme di 196
+grandezze indipendenti ma un insieme di \emph{blocchi} fortemente collineari al loro
+interno: 72 valori sono la storia della corona interna, altri 72 quella della corona
+esterna. Chiedersi quanto valga la singola feature numero~87 --- il sensore di
+nord-est di cinque passi fa --- non ha una risposta sensata, perch\'e essa \`e quasi
+determinata da una dozzina di altre. Il problema non \`e solo di leggibilit\`a: in
+presenza di feature perfettamente correlate il valore di Shapley ripartisce il merito
+fra di esse in parti uguali, diluendo l'attribuzione di un blocco importante su decine
+di componenti. KernelSHAP aggiunge a ci\`o un'ipotesi di indipendenza fra le feature nel
+campionamento delle coalizioni, palesemente violata qui, con distorsioni
+documentate~\cite{aas2021}. La risposta corretta non \`e abbandonare Shapley ma
+cambiarne i giocatori: \`e la costruzione nota come
+\emph{groupShapley}~\cite{groupshapley}, in cui i giocatori sono gruppi di feature
+semanticamente coerenti. I gruppi adottati sono definiti nella
+Sezione~\ref{sec:xai_gruppi} e sono, non a caso, le stesse unit\`a di cui si parla nel
+Capitolo~\ref{cap:rl}: la seconda corona, il vento, la memoria degli spostamenti.
+
+\paragraph{Esattezza.} Con dodici gruppi le coalizioni sono $2^{12}=4096$: un numero
+enumerabile in pochi secondi. Gli stimatori servono quando l'enumerazione \`e
+impraticabile; qui non lo \`e, e i valori di Shapley si calcolano in forma
+\emph{esatta}. Si evita cos\`i sia l'errore di approssimazione sia la scelta arbitraria
+del numero di campioni, e l'assioma di efficienza diventa un test numerico di
+correttezza del calcolo anzich\'e una propriet\`a asserita
+(Sezione~\ref{sec:xai_shapley}).
+
+\paragraph{La possibilit\`a di intervenire.} \`E la ragione pi\`u profonda. Nel
+supervised learning i metodi post-hoc sono necessari perch\'e il mondo non \`e
+rieseguibile: il modello \`e dato, i dati sono dati, e l'importanza di una feature pu\`o
+solo essere \emph{stimata} da un surrogato --- da cui la \emph{model
+reliance}~\cite{model_reliance} e le sue varianti a permutazione. Nel reinforcement
+learning con simulatore questa limitazione non sussiste. Bloccare un gruppo di feature
+e rieseguire la politica misurando il success rate effettivo non \`e un surrogato
+dell'importanza: \`e un \emph{intervento}, cio\`e evidenza diretta. Inoltre la politica,
+a differenza di un classificatore, non \`e un fine ma un mezzo per un ritorno
+misurabile, il che rende disponibile una metrica di importanza definita sul compito e
+non sulla funzione di perdita --- uno status che l'ablation ha nell'explainability per
+RL e non nel supervised~\cite{xrl_survey}. Rinunciarvi per affidarsi soltanto a metodi
+osservazionali significherebbe lasciare inutilizzata la prova migliore a disposizione.
+
+\paragraph{Perch\'e non LIME.} LIME \`e escluso come strumento principale per ragioni
+indipendenti. \`E \emph{locale} per costruzione: spiega una singola decisione, mentre le
+domande di questo capitolo sono globali (il vento viene usato? la seconda corona
+serve?); rispondervi richiederebbe di aggregare centinaia di spiegazioni locali,
+ricostruendo in modo deteriore un metodo globale. Le sue perturbazioni campionano
+inoltre le feature indipendentemente, il che con blocchi collineari produce punti
+lontani dalla variet\`a dei dati --- la storia dei sensori \`e quasi deterministica dati
+i sensori correnti. Infine le spiegazioni LIME sono note per essere instabili rispetto
+alla larghezza del kernel e al seed di campionamento~\cite{robustness_interp}: fondare
+su di esse un'affermazione del tipo ``la feature $X$ conta'' \`e metodologicamente
+fragile. Resta a LIME una nicchia legittima, che questo capitolo non sfrutta ma che
+segnaliamo fra gli sviluppi possibili: lo studio di caso di una singola decisione
+critica, dove la domanda \`e effettivamente locale.
+
+\paragraph{Il criterio adottato.} Ne segue l'impianto del capitolo: valori di Shapley
+\emph{esatti} sui gruppi per stabilire che cosa la politica guarda, ablation
+\emph{causale} sugli stessi gruppi per stabilire che cosa serve al compito, e infine
+sonde comportamentali per caratterizzare la strategia appresa. I tre livelli sono
+complementari e vengono confrontati nella Sezione~\ref{sec:xai_sintesi}.
+
+\subsection{Due accortezze tecniche}
+\label{sec:xai_accortezze}
+
+Due dettagli dell'implementazione hanno conseguenze sostanziali sui risultati e vanno
+dichiarati.
+
+\textbf{Logit pre-maschera.} MaskablePPO~\cite{maskable_ppo} pone a $-\infty$ i logit
+delle azioni che porterebbero l'agente a terra o fuori dominio
+(Sezione~\ref{sec:osservazione}). Attribuzioni e sonde comportamentali sono calcolate
+sui logit \emph{prima} del mascheramento: diversamente si misurerebbe la geometria
+della costa invece della politica. L'ablation, al contrario, gira con il mascheramento
+attivo, perch\'e in quel caso l'oggetto di interesse \`e il compito reale, di cui il
+mascheramento \`e parte.
+
+\textbf{Spazio normalizzato.} La rete non vede le grandezze fisiche ma la loro versione
+normalizzata da \texttt{VecNormalize}, che sottrae la media e divide per la deviazione
+standard stimate in addestramento. Ci\`o ha due implicazioni favorevoli. Primo, tutte le
+feature hanno varianza unitaria, quindi le magnitudini di attribuzione sono
+confrontabili fra blocchi senza ulteriori riscalature. Secondo, il vettore nullo nello
+spazio normalizzato corrisponde esattamente alla \emph{media di addestramento}: \`e
+quindi una baseline naturale, con la semantica di ``sensore che riporta il valore
+tipico'', e la stessa baseline serve sia per le coalizioni vuote dello Shapley sia per
+l'ablation. Fa eccezione la lettura dei sensori grezzi nelle sonde comportamentali,
+dove la normalizzazione per-feature altererebbe l'ordinamento e va quindi invertita.
+
+\section{I gruppi semantici dell'osservazione}
+\label{sec:xai_gruppi}
+
+L'analisi \`e condotta sul modello a \textbf{doppia corona con $v_{\max} = 2\,$m/s}
+(Sezione~\ref{sec:rl_dual}), che ha osservazione a 196 dimensioni e spazio d'azione
+$\text{Discrete}(8\times5)$. Le 196 feature sono raggruppate nei dodici blocchi della
+Tabella~\ref{tab:xai_gruppi}, che ricalcano la struttura dell'osservazione
+(Tabella~\ref{tab:obs}). La valutazione usa il protocollo held-out del
+Capitolo~\ref{cap:rl}: 26 sorgenti mai viste, 4 scenari di vento, 3 chunk temporali.
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.2}
+\small
+\begin{tabular}{L{5.6cm} C{2.0cm} C{1.6cm}}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{Gruppo}} &
+\textcolor{white}{\textbf{Indici}} &
+\textcolor{white}{\textbf{Dim.}} \\
+\midrule
+Concentrazione (istante)   & [0]        & 1  \\
+\rowcolor{rowalt}
+Concentrazione (storia)    & [1:10]     & 9  \\
+Spostamenti (storia)       & [10:28]    & 18 \\
+\rowcolor{rowalt}
+Corona 20\,m (istante)     & [28:36]    & 8  \\
+Corona 50\,m (istante)     & [36:44]    & 8  \\
+\rowcolor{rowalt}
+Corona 20\,m (storia)      & [44:116]   & 72 \\
+Corona 50\,m (storia)      & [116:188]  & 72 \\
+\rowcolor{rowalt}
+Vento $(u,v)$              & [188:190]  & 2  \\
+Corrente $(u,v)$           & [190:192]  & 2  \\
+\rowcolor{rowalt}
+Vettore verso max conc.    & [192:194]  & 2  \\
+Valore max conc.           & [194]      & 1  \\
+\rowcolor{rowalt}
+Et\`a ultimo contatto      & [195]      & 1  \\
+\midrule
+\textbf{Totale}            &            & \textbf{196} \\
+\bottomrule
+\end{tabular}
+\caption{I dodici gruppi semantici in cui \`e partizionata l'osservazione a doppia
+         corona. Sono i giocatori dello Shapley (Sezione~\ref{sec:xai_shapley}) e le
+         unit\`a dell'ablation (Sezione~\ref{sec:xai_ablation}).}
+\label{tab:xai_gruppi}
+\end{table}
+
+\section{Ablation causale di gruppo}
+\label{sec:xai_ablation}
+
+\paragraph{Protocollo.} Per ogni gruppo si azzerano le sue componenti nello spazio
+normalizzato --- equivalente, come detto, a sostituirle con la media di addestramento ---
+e si riesegue la politica misurando success rate, step al successo e distanza finale. Il
+disegno \`e \textbf{appaiato}: per ogni spawn si valutano la baseline e tutte e dodici le
+ablazioni a partire dallo stesso seme, quindi dallo stesso punto di partenza e dallo
+stesso campo. Senza questo accorgimento la varianza fra spawn --- la distanza iniziale
+varia da 300 a oltre 2000\,m --- sommergerebbe differenze di pochi punti. Sono stati
+valutati \textbf{624 spawn appaiati} $\times$ 13 condizioni, per un totale di circa 8100
+episodi; gli intervalli di confidenza al 95\% sono ottenuti per bootstrap
+ricampionando \emph{gli spawn} (non gli episodi), cos\`i da preservare l'appaiamento.
+L'ablazione di un gruppo si riduce ad azzerarne gli indici nell'osservazione gi\`a
+normalizzata, ad ogni passo dell'episodio:
+
+\begin{lstlisting}
+def run_episode_ablated(model, vec_env, ablate_idx, seed):
+    obs = vec_env.reset()                  # obs normalizzata (VecNormalize)
+    obs[:, ablate_idx] = 0.0               # azzera il gruppo -> media di training
+    done = False
+    while not done:
+        action, _ = model.predict(obs, deterministic=True,
+                                  action_masks=vec_env.env_method("action_masks")[0])
+        obs, _, done, info = vec_env.step(action)
+        obs[:, ablate_idx] = 0.0           # mantiene il blocco azzerato ad ogni step
+    return info
+\end{lstlisting}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig_ablation_clean_dualcorona.png}
+  \caption{Ablation causale di gruppo sul modello a doppia corona $v_{\max}{=}2$: 624
+           spawn appaiati, IC 95\% bootstrap. A sinistra il costo in efficienza (step al
+           successo), a destra quello in riuscita (success rate). L'ordinamento segue
+           l'efficienza. Il colore indica la \emph{classe di evidenza}: rosso se
+           l'intervallo esclude lo zero, grigio se lo contiene.}
+  \label{fig:xai_ablation}
+\end{figure}
+
+\paragraph{Risultati.} La baseline raggiunge il $99{,}8\%$ di success rate in $47{,}6$
+step medi --- valori misurati sui 624 spawn appaiati di questo protocollo, e quindi
+lievemente diversi dal $99{,}7\%$ / $49{,}8$ step riportati per lo stesso modello nella
+Tabella~\ref{tab:dual_vmax} (valutazione held-out a 1560 episodi). Il risultato dominante \`e la \textbf{storia della corona a 20\,m}: rimuoverla
+costa $-26{,}8$ punti di success rate (IC $[-30{,}3, -23{,}4]$) e $+77{,}7\%$ di step. \`E
+di gran lunga il blocco pi\`u portante dell'intera osservazione, e il fatto che a pesare
+sia la \emph{storia} --- non la lettura istantanea, che costa $-6{,}2$ punti --- dice che
+la politica integra il campo chimico nel tempo anzich\'e reagire all'istante. Seguono la
+memoria degli \textbf{spostamenti} ($-12{,}8$ punti), cio\`e il senso di dove si sta
+andando, e il \textbf{vettore verso la massima concentrazione vista} ($-5{,}0$).
+
+All'estremo opposto, tre gruppi risultano \textbf{indistinguibili dalla baseline} su
+entrambe le metriche: la concentrazione istantanea, la sua storia e la corona a 50\,m
+istantanea hanno intervalli di confidenza che contengono lo zero. Il caso della
+\textbf{concentrazione istantanea} \`e il pi\`u netto: azzerarla non cambia nulla
+($-0{,}7\%$ di step, IC $[-5{,}5, +4{,}5]$; success rate invariato). La lettura al centro
+della formazione \`e ridondante --- gli otto sensori direzionali la circondano a
+$20\,\text{m}$ e ne contengono gi\`a l'informazione --- e la politica, di fatto, la
+ignora.
+
+\paragraph{La seconda corona.} Il verdetto sulla corona a 50\,m \`e sfumato e merita
+attenzione, perch\'e incrocia il risultato della Sezione~\ref{sec:rl_dual}. La sua lettura
+istantanea non ha effetto misurabile ($+5{,}3\%$ di step, IC $[-0{,}4, +12{,}4]$), mentre
+la sua \emph{storia} ha un effetto piccolo ma reale sull'efficienza ($+13{,}9\%$, IC
+$[+7{,}0, +21{,}9]$) e nullo sulla riuscita ($-0{,}3$ punti). Il quadro \`e coerente con
+il confronto per riaddestramento del Capitolo~\ref{cap:rl}, dove la doppia corona a
+$v_{\max}{=}2$ risultava $28{,}3\%$ pi\`u veloce a parit\`a di success rate: i due
+esperimenti --- rimuovere il sensore da un modello \emph{congelato} e riaddestrare senza
+di esso --- convergono sullo stesso ordine di grandezza e sulla stessa conclusione
+qualitativa, cio\`e che la seconda corona compra \textbf{velocit\`a, non affidabilit\`a}.
+La convergenza di due protocolli indipendenti \`e un riscontro non banale.
+
+\section{Valori di Shapley esatti}
+\label{sec:xai_shapley}
+
+Con dodici giocatori le $2^{12} = 4096$ coalizioni sono state enumerate integralmente su
+un buffer di 1500 stati raccolti dai rollout della politica piena. Il payoff \`e
+$v(S) = \pi(a^*\,|\,x_S)$, con $a^*$ l'azione scelta a osservazione completa. La media di
+$\pi(a^*)$ passa da $0{,}201$ alla baseline a $0{,}707$ a osservazione piena: i dodici
+gruppi si ripartiscono quindi $0{,}506$ di massa di probabilit\`a. L'assioma di
+efficienza \`e verificato numericamente con un errore massimo di
+$3{,}2 \times 10^{-8}$, che conferma l'esattezza del calcolo.
+
+La Figura~\ref{fig:xai_shapley} riporta, per ciascuno dei dodici gruppi, la magnitudine media
+del valore di Shapley $|\phi_i|$: la lunghezza di ogni barra misura quanto quel blocco
+contribuisce, in media, alla probabilit\`a che la politica assegna all'azione scelta. \`E
+quindi una graduatoria di \emph{ci\`o che la rete guarda}, ossia una lettura
+\emph{osservazionale} della funzione appresa, distinta dalla \emph{necessit\`a} causale
+misurata dall'ablazione (Sezione~\ref{sec:xai_ablation}); come si vedr\`a, le due letture
+divergono, e il confronto \`e ripreso nella Sezione~\ref{sec:xai_sintesi}.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.94\linewidth]{fig_shapley_clean_dualcorona.png}
+  \caption{Valori di Shapley esatti sui dodici gruppi: media di $|\phi_i|$ su 1500 stati,
+           $4096$ coalizioni enumerate. La magnitudine \`e sull'asse, non nel colore.}
+  \label{fig:xai_shapley}
+\end{figure}
+
+La graduatoria di ci\`o che la rete \emph{guarda} \`e guidata a pari merito dalla
+\textbf{corrente} ($|\phi| = 0{,}236$) e dalla \textbf{memoria degli spostamenti}
+($0{,}236$), seguite dalla storia della corona a 20\,m ($0{,}183$). In coda stanno l'et\`a
+dell'ultimo contatto ($0{,}023$), la corona a 50\,m istantanea ($0{,}031$) e la
+concentrazione istantanea ($0{,}038$).
+
+\section{Analisi comportamentale}
+\label{sec:xai_comportamento}
+
+\paragraph{Non \`e risalita di gradiente.} La domanda pi\`u naturale su una politica di
+source seeking \`e se si riduca a seguire il sensore pi\`u intenso. Per rispondere si
+confronta, su 13\,738 stati con contatto col plume, la direzione del sensore massimo
+della corona a 20\,m con la direzione scelta. La lettura richiede un'accortezza: gli spawn
+stanno sul plume, che \`e avvettato \emph{a valle} della sorgente, quindi la sorgente cade
+quasi sempre in una direzione sistematica e il marginale $P(\text{azione})$ \`e
+fortemente sbilanciato. Confrontare la diagonale con $1/8$ sarebbe quindi fuorviante: va
+confrontata con il valore \emph{atteso sotto indipendenza}, che incorpora quel bias.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig_sensore_azione.png}
+  \caption{Sensore massimo (corona 20\,m) contro direzione scelta. A sinistra la
+           condizionale $P(a|s)$, dominata dal bias direzionale degli scenari; a destra il
+           \emph{lift} $P(a|s)/P(a)$, che divide per il marginale e isola il solo
+           contributo del sensore ($1 = $ nessun effetto).}
+  \label{fig:xai_sensore}
+\end{figure}
+
+La massa sulla diagonale \`e $0{,}068$ contro un atteso di $0{,}064$: un \textbf{lift di
+appena $1{,}06\times$}. La politica muove verso il sensore pi\`u intenso solo il $6\%$
+delle volte in pi\`u di quanto predica il suo stesso bias direzionale. \textbf{La politica
+non fa risalita di gradiente locale}: pur essendo la corona a 20\,m il blocco pi\`u
+portante dell'osservazione (Sezione~\ref{sec:xai_ablation}), non la usa per scegliere la
+direzione istantanea di massima concentrazione. I due risultati non sono in
+contraddizione, anzi si spiegano a vicenda: ci\`o che conta non \`e la corona ma la
+\emph{sua storia}, cio\`e l'integrazione temporale del campo, esattamente la strategia che
+il Capitolo~\ref{cap:rl} attribuiva all'RL per spiegare il divario con l'FCM --- il quale,
+per costruzione, la risalita di gradiente locale la fa.
+
+\paragraph{Il vento \`e letto ma non seguito.} Ruotando il vento a $360^\circ$ e tenendo
+fermo il resto dell'osservazione, la direzione preferita dalla politica insegue il
+controvento con un allineamento di appena $0{,}109$ (dove $1$ sarebbe anemotassi perfetta
+e $0$ indifferenza). La politica, cio\`e, \textbf{non fa anemotassi}. Il dato \`e coerente
+con l'addestramento: questo modello discende dalla catena \texttt{minimal}, in cui i
+reward di allineamento a vento e corrente sono \emph{disattivati}
+(Sezione~\ref{sec:rl_reward}) proprio perch\'e controproducenti. Il risultato vale quindi
+anche come validazione del metodo: l'analisi ritrova, senza saperlo, una propriet\`a nota
+del setup di addestramento.
+
+Va segnalato il limite della sonda: ruotare il vento tenendo fermo il campo di
+concentrazione produce osservazioni fuori dalla variet\`a dei dati, perch\'e vento e forma
+del plume sono fisicamente accoppiati. La response curve risponde quindi alla domanda
+``l'uscita della politica dipende dall'ingresso vento?'', non a ``cosa accadrebbe in un
+mondo con vento diverso?''.
+
+\paragraph{Il critic stima la distanza.} La funzione valore $V(s)$ correla negativamente
+con la distanza dalla sorgente ($r = -0{,}33$ su tutti gli scenari): il critic ha appreso
+una nozione di prossimit\`a senza che gliela si sia mai fornita esplicitamente. La
+correlazione \`e moderata perch\'e aggregata su 26 sorgenti e 12 combinazioni
+vento--chunk, ciascuna con il proprio livello di difficolt\`a: $V(s)$ stima il ritorno
+atteso, che dipende anche dallo scenario, non solo dalla distanza.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig_valore_entropia.png}
+  \caption{A sinistra $V(s)$ stimato dal critic in funzione della distanza dalla sorgente
+           (mediana e intervallo interquartile per bin); a destra l'entropia della
+           politica, calcolata sui logit pre-maschera.}
+  \label{fig:xai_valore}
+\end{figure}
+
+\section{Il valore della formazione: ablazione per riaddestramento}
+\label{sec:xai_noform}
+
+Le ablazioni fin qui condotte operano su un modello \textbf{congelato}: si azzera un gruppo
+di feature in inferenza e si misura il danno. Questo protocollo, per\`o, \emph{sovrastima}
+l'importanza di una feature, perch\'e l'agente non pu\`o adattarsi alla sua assenza. Per
+misurare il valore \emph{irriducibile} della formazione --- l'insieme dei sensori
+direzionali che distingue la nostra squadra master--slave da un singolo veicolo --- si
+adotta un protocollo pi\`u equo: \textbf{rimuovere la formazione e riaddestrare}.
+
+\paragraph{Protocollo.} A partire dal modello a singola corona con $v_{\max}=2\,\text{m/s}$
+si esegue un fine-tuning ($2$\,M step) in cui i sensori direzionali della formazione ---
+correnti e storici --- sono \textbf{azzerati} ad ogni passo (\emph{masking} della
+formazione). L'architettura non cambia (osservazione a 116 dimensioni, spazio d'azione
+$\text{Discrete}(8\times5)$): l'agente riparte dai pesi del modello con formazione e impara
+una nuova strategia con la sola informazione che gli resta --- la concentrazione nella
+\emph{propria} posizione, le memorie di concentrazione e di spostamento, il vento e la
+corrente. Tutto il resto (velocit\`a, protocollo held-out a 1560 episodi, dataset)
+\`e identico, cos\`i che il calo di prestazioni sia attribuibile alla \emph{sola} rimozione
+della formazione.
+
+\paragraph{Costo della rimozione.} La Tabella~\ref{tab:noform_cmp} confronta l'agente
+singolo con il modello a formazione di pari velocit\`a.
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\small
+\begin{tabular}{L{3.4cm} C{2.8cm} C{2.8cm} C{2.4cm}}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{Metrica}} &
+\textcolor{white}{\textbf{Con formazione}} &
+\textcolor{white}{\textbf{Senza formazione}} &
+\textcolor{white}{\textbf{$\Delta$}} \\
+\midrule
+\rowcolor{rowalt} \textbf{SR globale} & 99{,}7\% & \textbf{93{,}3\%} & $-6{,}4$ \\
+Step medi (succ.) & 69{,}5 & 100{,}6 & $+44{,}7\%$ \\
+\midrule
+V0 & 100{,}0\% & 97{,}2\% & $-2{,}8$ \\
+\rowcolor{rowalt} V1 & 99{,}5\% & 97{,}9\% & $-1{,}6$ \\
+V2 & 99{,}2\% & 86{,}4\% & $\mathbf{-12{,}8}$ \\
+\rowcolor{rowalt} V3 & 100{,}0\% & 91{,}8\% & $-8{,}2$ \\
+Q1/4 & 100{,}0\% & 97{,}9\% & $-2{,}1$ \\
+\rowcolor{rowalt} Q1/2 & 99{,}0\% & 90{,}0\% & $\mathbf{-9{,}0}$ \\
+Q3/4 & 100{,}0\% & 92{,}1\% & $-7{,}9$ \\
+\bottomrule
+\end{tabular}
+\caption{Modello con vs.\ senza formazione a $v_{\max}{=}2\,$m/s (1560 episodi ciascuno). Il
+         $\Delta$ \`e il costo \emph{netto} della rimozione della formazione, dopo che
+         l'agente ha avuto modo di adattarsi.}
+\label{tab:noform_cmp}
+\end{table}
+
+La formazione vale \textbf{$6{,}4$ punti} di success rate globale e circa il $45\%$ in
+velocit\`a. Il costo non \`e uniforme: \`e trascurabile negli scenari facili (V0/V1, Q1/4,
+entro $-3$ punti) e diventa marcato dove il plume \`e avvettato e diffuso --- \textbf{V2}
+($-12{,}8$) e \textbf{Q1/2} ($-9{,}0$) --- ossia dove il gradiente \emph{spaziale}
+istantaneo delle otto letture simultanee \`e pi\`u prezioso. Il calo resta comunque
+\textbf{moderato}: l'agente singolo riaddestrato recupera gran parte delle prestazioni, e
+soprattutto rimane molto sopra il metodo del gradiente --- l'FCM adattivo a pari velocit\`a
+($lr=20\,$m) si ferma al $58{,}2\%$, circa \textbf{35 punti} sotto l'agente singolo (93{,}3\%).
+\`E un fatto notevole: un agente RL che vede solo la propria concentrazione batte nettamente
+un metodo reattivo che dispone dell'intera formazione. Ci\`o che separa il successo dal
+fallimento non \`e il sensore, ma la strategia appresa.
+
+\paragraph{Come compensa l'agente singolo.} L'explainability del modello senza formazione
+(stesso protocollo: ablazione di gruppo e Shapley esatti) rivela uno \textbf{spostamento del
+baricentro informativo dal sensing spaziale a quello temporale}
+(Tabella~\ref{tab:noform_shift}, Figura~\ref{fig:noform_xai}). Privato della corona,
+l'agente si regge in modo schiacciante sulla \textbf{memoria degli spostamenti} (ablazione
+$-55{,}6$ punti, Shapley $|\phi|=0{,}27$): correla i propri movimenti con le variazioni
+della concentrazione che misura sotto di s\'e, ricostruendo nel \emph{tempo} il gradiente
+che la formazione forniva nello \emph{spazio}. Seguono l'\emph{homing} verso la massima
+concentrazione vista ($-25{,}8$), la corrente ($-12{,}8$) e la storia della concentrazione
+propria ($-11{,}2$) --- proprio la feature che il modello \emph{con} formazione ignorava
+($\approx 0$).
+
+Come per il modello con formazione (Sezione~\ref{sec:xai_sintesi}), anche qui
+\emph{attribuzione} e \emph{necessit\`a} divergono, e nello stesso modo istruttivo. Il
+\textbf{vettore verso il massimo di concentrazione} \`e solo quarto per attribuzione
+($|\phi| = 0{,}07$) ma \textbf{secondo per impatto causale} ($-25{,}8$): l'homing di memoria
+\`e insostituibile per il compito pur essendo poco ``guardato'' dalla rete. Specularmente, la
+\textbf{corrente} \`e seconda per attribuzione ($|\phi| = 0{,}12$) ma pesa meno all'ablazione
+($-12{,}8$), confermando --- ora anche in assenza della corona --- che ci\`o che la rete
+osserva non coincide con ci\`o che le \`e strettamente necessario.
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\small
+\begin{tabular}{L{5.4cm} C{2.9cm} C{2.9cm}}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{Gruppo ($\Delta$SR)}} &
+\textcolor{white}{\textbf{Con formazione}} &
+\textcolor{white}{\textbf{Senza formazione}} \\
+\midrule
+Corona 20\,m (storia)              & $\mathbf{-26{,}8}$ & mascherata \\
+\rowcolor{rowalt} Spostamenti (storia) & $-12{,}8$ & $\mathbf{-55{,}6}$ \\
+Corona 20\,m (istante)             & $-6{,}2$  & mascherata \\
+\rowcolor{rowalt} Vettore verso max conc.\ (homing) & $-5{,}0$ & $-25{,}8$ \\
+Corrente $(u,v)$                   & $-3{,}0$  & $-12{,}8$ \\
+\rowcolor{rowalt} Vento $(u,v)$    & $-2{,}2$  & $-1{,}4$ \\
+Concentrazione (storia)            & $-0{,}5$  & $-11{,}2$ \\
+\rowcolor{rowalt} Corona 50\,m (storia) & $-0{,}3$ & --- \\
+Concentrazione (istante)           & $0{,}0$   & $-3{,}2$ \\
+\rowcolor{rowalt} Corona 50\,m (istante) & $0{,}0$ & --- \\
+Valore max conc.                   & $+0{,}2$  & $-7{,}1$ \\
+\rowcolor{rowalt} Et\`a ultimo contatto & $+0{,}2$ & $-0{,}5$ \\
+\bottomrule
+\end{tabular}
+\caption{Spostamento del baricentro informativo: costo in success rate ($\Delta$SR,
+         punti percentuali) di \emph{ogni} gruppo, per il modello \emph{con} formazione
+         (doppia corona, ablazioni della Sezione~\ref{sec:xai_ablation}) e per l'agente
+         \emph{senza} formazione (singola corona, formazione mascherata). Con la formazione la
+         politica si regge sul gradiente \emph{spaziale} (storia della corona); rimossa, il
+         peso si trasferisce sul sensing \emph{temporale} --- spostamenti, homing, storia e
+         valore di concentrazione, tutti nettamente pi\`u costosi. ``mascherata'': corona
+         azzerata, effetto spurio escluso (Figura~\ref{fig:noform_xai}); ``---'': gruppo
+         assente, poich\'e l'agente singolo ha una sola corona.}
+\label{tab:noform_shift}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}{\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{fig_ablation_clean_noformation.png}
+    \caption{Ablazione di gruppo.}
+  \end{subfigure}
+
+  \vspace{5mm}
+  \begin{subfigure}{\linewidth}
+    \centering
+    \includegraphics[width=0.9\linewidth]{fig_shapley_clean_noformation.png}
+    \caption{Valori di Shapley esatti.}
+  \end{subfigure}
+  \caption{Explainability dell'agente singolo (senza formazione), sui soli gruppi
+           \emph{genuini}: la memoria degli spostamenti \`e la feature portante, seguita
+           dall'homing verso il massimo di concentrazione e dalla corrente. I gruppi della
+           corona sono \textbf{esclusi} perch\'e mascherati a zero: \texttt{VecNormalize} li
+           rende una costante non nulla il cui azzeramento perturberebbe il bias appreso,
+           producendo un effetto spurio privo di contenuto informativo.}
+  \label{fig:noform_xai}
+\end{figure}
+
+Il quadro chiude il cerchio dell'analisi: la rete non ``perde un pezzo'' quando le si toglie
+la formazione, ma \textbf{ricompone} la stima della direzione con gli strumenti che le
+restano. La formazione \`e un vantaggio reale ma \emph{sostituibile in parte} da una
+strategia temporale appresa; \`e negli scenari a plume diffuso, dove il segnale temporale
+degenera pi\`u in fretta, che il suo contributo spaziale resta insostituibile.
+
+\section{Sintesi: che cosa la rete guarda, che cosa le serve}
+\label{sec:xai_sintesi}
+
+Il confronto fra le due graduatorie \`e la parte pi\`u istruttiva del capitolo, perch\'e
+\textbf{divergono}.
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\small
+\begin{tabular}{L{4.1cm} C{2.2cm} C{1.9cm} L{3.9cm}}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{Gruppo}} &
+\textcolor{white}{\textbf{Shapley $|\phi|$}} &
+\textcolor{white}{\textbf{$\Delta$SR}} &
+\textcolor{white}{\textbf{Lettura}} \\
+\midrule
+Corona 20\,m (storia)          & 0{,}183 (3\textsuperscript{o})  & $\mathbf{-26{,}8}$ & indispensabile \\
+\rowcolor{rowalt}
+Spostamenti (storia)           & 0{,}236 (1\textsuperscript{o})  & $-12{,}8$ & indispensabile \\
+Corona 20\,m (istante)         & 0{,}104 (4\textsuperscript{o})  & $-6{,}2$  & necessaria \\
+\rowcolor{rowalt}
+Vettore verso max conc.\ (homing) & 0{,}044 (8\textsuperscript{o}) & $-5{,}0$ & necessaria, poco guardata \\
+Corrente $(u,v)$               & \textbf{0{,}236} (1\textsuperscript{o}) & $-3{,}0$ & guardata, poco necessaria \\
+\rowcolor{rowalt}
+Vento $(u,v)$                  & 0{,}075 (6\textsuperscript{o})  & $-2{,}2$  & guardata, poco necessaria \\
+Concentrazione (storia)        & 0{,}082 (5\textsuperscript{o})  & $-0{,}5$  & guardata, poco necessaria \\
+\rowcolor{rowalt}
+Corona 50\,m (storia)          & 0{,}058 (7\textsuperscript{o})  & $-0{,}3$  & ridondante \\
+Concentrazione (istante)       & 0{,}038 (10\textsuperscript{o}) & $0{,}0$   & ridondante \\
+\rowcolor{rowalt}
+Corona 50\,m (istante)         & 0{,}031 (11\textsuperscript{o}) & $0{,}0$   & ridondante \\
+Valore max conc.               & 0{,}044 (8\textsuperscript{o})  & $+0{,}2$  & ridondante \\
+\rowcolor{rowalt}
+Et\`a ultimo contatto          & 0{,}023 (12\textsuperscript{o}) & $+0{,}2$  & ridondante \\
+\bottomrule
+\end{tabular}
+\caption{Attribuzione (Shapley $|\phi|$: \emph{che cosa la rete guarda}) contro necessit\`a
+         causale (ablation $\Delta$SR in punti percentuali: \emph{che cosa serve al compito}),
+         per tutti i dodici gruppi, ordinati per necessit\`a decrescente. Le due graduatorie
+         \textbf{divergono}: la \emph{corrente} \`e la pi\`u guardata (Shapley 1\textsuperscript{o})
+         ma poco necessaria ($-3{,}0$), mentre la \emph{storia della corona} \`e solo terza per
+         attribuzione ma di gran lunga la pi\`u necessaria ($-26{,}8$); specularmente l'\emph{homing}
+         \`e poco guardato (8\textsuperscript{o}) ma utile ($-5{,}0$).}
+\label{tab:xai_sintesi}
+\end{table}
+
+Il caso pi\`u istruttivo \`e la \textbf{corrente marina}: \`e il gruppo con
+l'attribuzione pi\`u alta in assoluto ($|\phi| = 0{,}236$, primo a pari merito), eppure
+rimuoverla costa appena $3$ punti di success rate. La rete la legge molto, ma il compito
+ne ha poco bisogno --- segno che l'informazione che la corrente veicola \`e in larga parte
+\emph{recuperabile} dagli altri blocchi, in primo luogo dalla storia della corona, che del
+trasporto porta gi\`a la traccia. Simmetricamente, la \textbf{storia della corona a
+20\,m} \`e solo terza per attribuzione ma prima, e di gran lunga, per impatto causale: \`e
+l'unico blocco davvero non sostituibile.
+
+\`E precisamente la divergenza che giustifica l'impianto metodologico della
+Sezione~\ref{sec:xai_rassegna}. Un capitolo fondato sui soli metodi post-hoc avrebbe
+concluso che la corrente \`e la grandezza pi\`u importante per la politica; l'intervento
+mostra che, se la si toglie, la politica se la cava quasi altrettanto bene. Le due
+domande --- che cosa la rete guarda, che cosa serve al compito --- hanno risposte diverse,
+e solo la seconda \`e quella che conta per decidere quali sensori montare a bordo.
+
+Ne emerge un ritratto coerente della politica appresa. Essa \textbf{non} \`e un
+risalitore di gradiente: la direzione istantanea di massima concentrazione non guida la
+scelta (lift $1{,}06\times$), e la concentrazione al centro della formazione \`e
+addirittura ignorata. Ci\`o su cui si regge \`e l'\textbf{integrazione temporale} del
+campo chimico locale --- la storia della corona a 20\,m, il blocco pi\`u portante, unita
+alla memoria di dove si \`e andati --- affiancata da una memoria esplicita del punto
+migliore incontrato. La seconda corona a 50\,m serve a puntare meglio le falcate lunghe,
+comprando velocit\`a e non affidabilit\`a, in accordo con quanto il
+Capitolo~\ref{cap:rl} aveva stabilito per riaddestramento. Vento e corrente vengono letti
+ma non usati come bussola. \`E, in sintesi, esattamente la strategia che il
+Capitolo~\ref{cap:rl} ipotizzava per spiegare il divario con il metodo del gradiente ---
+con la differenza che qui \`e misurata anzich\'e supposta.

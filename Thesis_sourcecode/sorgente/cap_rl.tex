@@ -1,0 +1,1412 @@
+\chapter{Apprendimento per rinforzo: PPO}
+\label{cap:rl}
+
+\section{Motivazione}
+\label{sec:rl_motiv}
+
+Il metodo del gradiente presentato nel Capitolo~\ref{cap:fcm} \`e per natura
+\emph{locale e reattivo}: decide l'azione basandosi solo sulle letture correnti degli
+slave, senza memoria dell'episodio n\'e capacit\`a di pianificazione. Anche nella sua
+versione adattiva con Adam, esso resta limitato negli scenari a plume diffuso, dove il
+gradiente locale degenera e il metodo si blocca su massimi locali.
+
+L'approccio proposto in questo lavoro si basa sul \textbf{Reinforcement Learning} (RL),
+che mira a superare questi limiti apprendendo, tramite l'interazione ripetuta con
+l'ambiente~\citep{sutton_barto}, una politica di navigazione che sfrutta la storia delle
+osservazioni e le informazioni contestuali sul vento e sulle correnti. A differenza degli
+approcci gradient-based e model-based, l'RL \`e \emph{model-free} e non richiede un
+modello esplicito dell'ambiente: la strategia emerge dall'ottimizzazione su milioni di
+episodi simulati. L'obiettivo \`e apprendere la politica del master a partire dalle stesse
+misurazioni della squadra di slave usate dal FCM, verificando se l'apprendimento
+produca strategie pi\`u robuste del gradiente reattivo.
+
+\section{Introduzione a PPO}
+\label{sec:ppo}
+
+Proximal Policy Optimization (PPO)~\citep{ppo} \`e un algoritmo di reinforcement
+learning \emph{on-policy} appartenente alla famiglia dei \emph{Policy Gradient Methods}.
+L'architettura segue lo schema \emph{actor-critic}: una rete (la \emph{policy} o attore)
+produce la distribuzione di probabilit\`a sulle azioni $\pi_\theta(a|s)$, mentre una
+seconda rete (la \emph{value function} o critico) stima la funzione valore $V(s)$, ovvero
+il \emph{ritorno atteso} (la somma scontata delle ricompense future) a partire dallo
+stato $s$ seguendo la politica corrente.
+
+In forma esplicita: poich\'e lo spazio d'azione di questo lavoro \`e \emph{discreto},
+l'attore produce un vettore di \emph{logit} $z_\theta(s)$ e la politica \`e la distribuzione
+categorica ottenuta con la funzione \emph{softmax},
+\begin{equation}
+    \pi_\theta(a \mid s) = \frac{\exp\!\big(z_\theta(s)_a\big)}
+                                {\sum_{a'} \exp\!\big(z_\theta(s)_{a'}\big)},
+    \label{eq:policy_softmax}
+\end{equation}
+mentre la funzione valore \`e definita come il ritorno atteso scontato a partire da $s$,
+\begin{equation}
+    V^{\pi_\theta}(s) = \mathbb{E}_{\pi_\theta}\!\left[\,
+        \sum_{k=0}^{\infty} \gamma^{k}\, r_{t+k+1} \;\middle|\; s_t = s \right],
+    \label{eq:value_fn}
+\end{equation}
+con $\gamma \in (0,1]$ il fattore di sconto (Tabella~\ref{tab:hyper}) e $r_{t}$ la ricompensa
+al passo $t$; il critico ne apprende un'approssimazione $V_\phi(s)$ tramite una seconda rete.
+
+Il meccanismo chiave di PPO \`e il \emph{clipped surrogate objective}: l'algoritmo
+massimizza il miglioramento della policy ma limita la deviazione rispetto alla policy
+precedente tramite il clipping del rapporto di probabilit\`a
+$r_t(\theta) = \pi_\theta(a_t|s_t) / \pi_{\theta_{\text{old}}}(a_t|s_t)$:
+\begin{equation}
+    L^{\text{CLIP}}(\theta) = \mathbb{E}_t\!\left[\min\!\big(
+    r_t(\theta)\,\hat{A}_t,\;
+    \text{clip}(r_t(\theta), 1-\epsilon, 1+\epsilon)\,\hat{A}_t \big)\right]
+    \label{eq:ppo_clip}
+\end{equation}
+
+dove $\hat{A}_t$ \`e la stima del vantaggio (\emph{advantage}) e $\epsilon$ \`e il
+parametro di clipping. L'obiettivo complessivo combina tre contributi: la \emph{policy
+loss} (clipped), la \emph{value loss} che allinea la stima $V(s)$ ai ritorni osservati, e
+un termine di \emph{entropy bonus} che mantiene l'esplorazione:
+\begin{equation}
+    L(\theta) = L^{\text{CLIP}}(\theta) - c_1\,L^{\text{VF}}(\theta) + c_2\,H[\pi_\theta]
+\end{equation}
+
+La stima del vantaggio \`e ottenuta tramite \emph{Generalized Advantage Estimation}
+(GAE)~\citep{gae}, che offre un buon compromesso tra bias e varianza. Durante il training
+la policy \`e stocastica (campionamento da $\pi_\theta$); in inferenza pu\`o essere resa
+deterministica scegliendo l'azione a probabilit\`a massima.
+
+\subsection{MaskablePPO}
+\label{sec:maskable}
+
+L'implementazione utilizzata \`e \textbf{MaskablePPO} della libreria \emph{sb3-contrib},
+estensione di PPO che integra l'\emph{action masking}~\citep{maskable_ppo} descritto nella
+Sezione~\ref{sec:masking}. Ad ogni passo, le azioni che porterebbero il master sulla
+terraferma o fuori dal dominio vengono escluse dalla distribuzione di probabilit\`a,
+impedendo le collisioni con la costa senza penalit\`a a posteriori e garantendo
+l'esplorazione di sole traiettorie ammissibili.
+
+L'architettura della policy \`e una rete \emph{Multi-Layer Perceptron} (MLP) con due reti
+separate per attore e critico, ciascuna composta da due strati nascosti da 256 neuroni
+con attivazione $\tanh$. La libreria \emph{Stable-Baselines3}~\citep{sb3}, costruita su
+PyTorch, fornisce l'implementazione di base e ne rende l'uso riproducibile. La creazione
+dell'agente e l'avvio dell'addestramento si riducono a poche righe:
+
+\begin{lstlisting}
+env = ActionMasker(SourceSeekingEnv(config), mask_fn)   # masking delle azioni
+model = MaskablePPO("MlpPolicy", env,
+                    policy_kwargs=dict(net_arch=[256, 256], activation_fn=nn.Tanh),
+                    n_steps=4096, batch_size=128, gamma=0.99, clip_range=0.15)
+model.learn(total_timesteps=6_000_000)
+\end{lstlisting}
+
+\section{Spazio di osservazione}
+\label{sec:osservazione}
+
+L'osservazione fornita alla rete neurale rappresenta il campo chimico locale, la
+cinematica dell'agente e le condizioni ambientali. Tutte le feature sono normalizzate.
+Se ne considerano due configurazioni, confrontate nella
+Sezione~\ref{sec:rl_dual}: la \textbf{singola corona} (\textbf{116 dimensioni}), in cui
+gli slave formano un'unica corona di 8 sensori a $r_s = 20\,\text{m}$ attorno al master,
+e la \textbf{doppia corona} (\textbf{196 dimensioni}), che aggiunge una seconda corona a
+$r_{s2} = 50\,\text{m}$ per dare all'agente informazione sul plume a scala spaziale
+pi\`u larga. La struttura \`e riportata nella Tabella~\ref{tab:obs}.
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.25}
+\small
+\begin{tabular}{L{5.0cm} C{1.5cm} C{1.5cm} L{4.6cm}}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{Componente}} &
+\textcolor{white}{\textbf{Singola}} &
+\textcolor{white}{\textbf{Doppia}} &
+\textcolor{white}{\textbf{Descrizione}} \\
+\midrule
+Concentrazione corrente        & 1  & 1  & Concentrazione nella posizione attuale \\
+\rowcolor{rowalt}
+Memoria concentrazione         & 9  & 9  & Ultime 9 letture di concentrazione \\
+Memoria spostamenti            & 18 & 18 & Ultimi 9 spostamenti $(\Delta x, \Delta y)$ \\
+\rowcolor{rowalt}
+Sensori corona 1               & 8  & 8  & Concentrazione nelle 8 direzioni a $20\,\text{m}$ \\
+Sensori corona 2               & -- & 8  & Concentrazione nelle 8 direzioni a $50\,\text{m}$ \\
+\rowcolor{rowalt}
+Memoria corona 1               & 72 & 72 & Corona 1 per i 9 timestep passati \\
+Memoria corona 2               & -- & 72 & Corona 2 per i 9 timestep passati \\
+\rowcolor{rowalt}
+Vento                          & 2  & 2  & Componenti $u, v$ [m/s] \\
+Corrente                       & 2  & 2  & Componenti $u, v$ [m/s] \\
+\rowcolor{rowalt}
+Informazione posizionale       & 4  & 4  & Direzione e valore della max concentrazione vista,
+                                           step dall'ultimo contatto col plume \\
+\midrule
+\textbf{Totale}                & \textbf{116} & \textbf{196} & \\
+\bottomrule
+\end{tabular}
+\caption{Spazio di osservazione della rete neurale: singola corona (116 dimensioni) e
+         doppia corona (196 dimensioni).}
+\label{tab:obs}
+\end{table}
+
+\section{Addestramento}
+\label{sec:training}
+
+I modelli sono addestrati per $6 \times 10^6$ step con gli iperparametri riportati nella
+Tabella~\ref{tab:hyper}, sulla suddivisione del dataset e con l'augmentation temporale
+descritte nella Sezione~\ref{sec:split}.
+
+\paragraph{Learning rate decrescente.}
+Il learning rate segue uno \textbf{schedule a gradini decrescenti}
+(Tabella~\ref{tab:lr_curr}, sinistra): si parte da un valore relativamente alto
+($3 \times 10^{-4}$) nelle prime fasi, quando la policy \`e ancora lontana
+dall'ottimo e conviene compiere aggiornamenti ampi per esplorare rapidamente lo spazio
+delle soluzioni, e lo si riduce progressivamente fino a $1 \times 10^{-5}$ nelle fasi
+finali, quando servono aggiustamenti pi\`u fini per affinare la politica senza
+destabilizzare quanto gi\`a appreso.
+
+\paragraph{Curriculum sugli scenari.}
+La distribuzione degli scenari di addestramento evolve tramite un parametro
+$\alpha \in [0,1]$ (Tabella~\ref{tab:lr_curr}, destra): per $\alpha = 0$ gli scenari sono
+estratti in modo \textbf{uniforme}, mentre per $\alpha \to 1$ il peso si concentra
+progressivamente sugli scenari pi\`u difficili --- lo scenario di vento V2 e i chunk
+temporali centrali (Q1/2), caratterizzati da plume pi\`u diffuso. In questo modo l'agente
+apprende prima le situazioni pi\`u semplici e, una volta acquisita una politica di base,
+viene esposto in misura crescente ai casi critici, secondo la logica del
+\emph{curriculum learning}.
+
+\begin{table}[H]
+\centering
+\small
+\begin{minipage}{0.48\linewidth}
+\centering
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{C{3.5cm} C{2cm}}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{Step}} & \textcolor{white}{\textbf{LR}} \\
+\midrule
+0 -- 2\,000\,000        & $3 \times 10^{-4}$ \\
+2\,000\,000 -- 4\,000\,000 & $1 \times 10^{-4}$ \\
+4\,000\,000 -- 5\,000\,000 & $5 \times 10^{-5}$ \\
+5\,000\,000 -- 6\,000\,000 & $1 \times 10^{-5}$ \\
+\bottomrule
+\end{tabular}
+\end{minipage}
+\hfill
+\begin{minipage}{0.48\linewidth}
+\centering
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{C{3.5cm} C{2cm}}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{Step}} & \textcolor{white}{\textbf{$\alpha$}} \\
+\midrule
+0 -- 2\,000\,000        & 0{,}0 \\
+2\,000\,000 -- 4\,000\,000 & 0{,}5 \\
+4\,000\,000 -- 6\,000\,000 & 0{,}8 \\
+\bottomrule
+\end{tabular}
+\end{minipage}
+\caption{Schedule del learning rate (sinistra) e curriculum sugli scenari (destra).}
+\label{tab:lr_curr}
+\end{table}
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.2}
+\small
+\begin{tabular}{L{5cm} C{4cm}}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{Parametro}} & \textcolor{white}{\textbf{Valore}} \\
+\midrule
+Algoritmo            & MaskablePPO \\
+\rowcolor{rowalt}
+Policy               & MLP ($256\times256$, $\tanh$) \\
+Step totali          & $6\,000\,000$ \\
+\rowcolor{rowalt}
+$n\_steps$           & 4096 \\
+Batch size           & 128 \\
+\rowcolor{rowalt}
+Epoche               & 10 \\
+$\gamma$             & 0{,}99 \\
+\rowcolor{rowalt}
+$\lambda$ (GAE)      & 0{,}95 \\
+Clip range           & 0{,}15 \\
+\rowcolor{rowalt}
+Coeff.\ value function & 0{,}3 \\
+Coeff.\ entropia     & 0{,}01 \\
+\rowcolor{rowalt}
+Max grad norm        & 0{,}5 \\
+Target KL            & 0{,}02 \\
+\bottomrule
+\end{tabular}
+\caption{Iperparametri di training del modello PPO.}
+\label{tab:hyper}
+\end{table}
+
+\section{Risultati}
+\label{sec:rl_risultati}
+
+La valutazione \`e condotta sulle 26 sorgenti held-out (SRC107--SRC132) su 4 scenari di
+vento e 3 chunk temporali, in modalit\`a deterministica, per un totale di 1560 episodi
+per modello. Si analizzano in sequenza l'effetto del raggio di campionamento
+(Sezione~\ref{sec:rl_sensor}) e della funzione di reward (Sezione~\ref{sec:rl_reward}),
+che fissano il modello di riferimento \texttt{minimal}. Da questo si sviluppa la
+\textbf{catena a velocit\`a variabile} (Sezione~\ref{sec:rl_velocity}), in cui la
+velocit\`a diventa una scelta dell'agente, e su ciascuno stadio della catena si valuta la
+\textbf{doppia corona} (Sezione~\ref{sec:rl_dual}). Seguono due approfondimenti sulla
+politica cos\`i ottenuta --- il restringimento del raggio di successo
+(Sezione~\ref{sec:rl_r10}) e le heatmap di occupazione (Sezione~\ref{sec:rl_heatmap}) ---
+quindi l'analisi delle spawn map (Sezione~\ref{sec:spawn_map}) e il confronto diretto con
+il metodo del gradiente (Sezione~\ref{sec:rl_confronto}), esteso infine all'intero range di
+velocit\`a operative (Sezione~\ref{sec:rl_fullrange}).
+
+\subsection{Analisi sul raggio di campionamento crescente}
+\label{sec:rl_sensor}
+
+Analogamente a quanto fatto per l'FCM (Sezione~\ref{sec:sensor_range}), si \`e indagato
+l'effetto del raggio di campionamento $r_s$ --- la distanza a cui gli slave si
+posizionano attorno al master --- anche per l'agente RL. A partire da un modello base
+addestrato con $r_s = 20\,\text{m}$ (success rate $94\%$), \`e stato condotto un
+\emph{fine-tuning progressivo a catena} con raggi crescenti
+$r_s \in \{50, 100, 150, 200\}\,\text{m}$: ogni modello \`e stato ottenuto rifinendo per
+$2 \times 10^6$ step il modello dello stadio precedente
+($20 \to 50 \to 100 \to 150 \to 200\,\text{m}$), con distribuzione uniforme di scenari e
+chunk. La Tabella~\ref{tab:rl_sensor} riporta i risultati.
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\resizebox{\linewidth}{!}{%
+\setlength{\tabcolsep}{4pt}%
+\begin{tabular}{C{1.6cm} C{1.0cm} C{1.0cm} C{1.0cm} C{1.0cm} C{1.0cm} C{1.0cm} C{1.0cm} C{1.0cm}}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{$r_s$}} &
+\textcolor{white}{\textbf{SR\%}} &
+\textcolor{white}{\textbf{V0}} &
+\textcolor{white}{\textbf{V1}} &
+\textcolor{white}{\textbf{V2}} &
+\textcolor{white}{\textbf{V3}} &
+\textcolor{white}{\textbf{Q1/4}} &
+\textcolor{white}{\textbf{Q1/2}} &
+\textcolor{white}{\textbf{Q3/4}} \\
+\midrule
+\rowcolor{best}
+\textbf{20\,m} & \textbf{94} & \textbf{100} & \textbf{82} & \textbf{87} & \textbf{99} & \textbf{100} & \textbf{84} & \textbf{96} \\
+50\,m  & 93 & 100 & 82 & 91 & 100 & 100 & 84 & 96 \\
+100\,m & 87 & 100 & 85 & 82 & 82 & 100 & 81 & 81 \\
+150\,m & 63 & 65  & 60 & 61 & 66 & 61  & 56 & 72 \\
+200\,m & 52 & 47  & 45 & 39 & 75 & 49  & 39 & 66 \\
+\bottomrule
+\end{tabular}}
+\caption{Sweep sul raggio di campionamento per l'agente RL (fine-tuning progressivo dal
+         modello base a $20\,\text{m}$, 1560 episodi per valore). In verde il valore
+         ottimale.}
+\label{tab:rl_sensor}
+\end{table}
+
+Si osserva una \textbf{degradazione monotona} delle prestazioni all'aumentare del raggio,
+con il calo pi\`u netto tra 100\,m ($87\%$) e 150\,m ($63\%$). La spiegazione \`e di
+natura fisica e coincide con quella dell'FCM: il criterio di successo richiede di arrivare
+entro $50\,\text{m}$ dalla sorgente, un obiettivo di navigazione \emph{locale}; sensori
+troppo distanti (es.\ $200\,\text{m}$) campionano punti oltre la sorgente stessa,
+invertendo o annullando il gradiente direzionale nella fase critica di avvicinamento. Il
+raggio ottimale per questo task e dataset \`e dunque $r_s \approx 20\,\text{m}$, fissato
+dalla scala caratteristica del plume nelle simulazioni MIKE21; aumentarlo sostituisce
+informazione locale utile con informazione irrilevante. Il risultato \`e indipendente
+dall'architettura della rete e dalla funzione di reward, identiche per tutti i modelli
+testati. Tutti i modelli successivi adottano quindi $r_s = 20\,\text{m}$.
+
+\subsection{Analisi sulla funzione di reward}
+\label{sec:rl_reward}
+
+Fissato il raggio ottimale, si \`e studiato l'effetto della \textbf{funzione di reward}. Ad
+ogni passo l'ambiente calcola una ricompensa scalare come \emph{somma} di pi\`u componenti;
+le tre varianti confrontate differiscono per quali componenti sono attive e per la
+\emph{forma} del termine di distanza. Se ne descrivono di seguito i singoli componenti.
+
+\begin{itemize}[leftmargin=1.4em, itemsep=2pt]
+  \item \textbf{Bonus di raggiungimento}: $+100$ all'arrivo (distanza $\leq 50\,$m), pi\`u un
+        bonus di tempo residuo $\max\!\big(0,\,(N_{\max}-k)/N_{\max}\cdot 50\big)$ che premia
+        l'arrivare in anticipo.
+  \item \textbf{Penalit\`a di uscita dal dominio}: $-10$ se il passo porta fuori dai bordi.
+  \item \textbf{Reward di distanza} (segnale dominante): premia l'avvicinamento alla sorgente.
+        In forma \emph{lineare} \`e proporzionale alla riduzione di distanza nel passo,
+        $(d_{t-1}-d_t)\,K/3000$; in forma \emph{quadratica} (variante \texttt{full}) usa un
+        potenziale $\propto(Q-d)^2$ modulato da uno \emph{zone multiplier} (che pesa di pi\`u i
+        progressi vicino alla sorgente) e da una \emph{retreat asymmetry} (il moto di
+        allontanamento \`e penalizzato $3\times$).
+  \item \textbf{Gradiente di concentrazione}: $\pm 0{,}05$ a seconda che la concentrazione
+        sotto l'agente aumenti o diminuisca nel passo.
+  \item \textbf{Allineamento a vento e corrente}: $\pm 0{,}05$ per ciascuno, che premia il
+        muoversi \emph{controvento} e \emph{controcorrente} (assunti diretti verso la sorgente).
+  \item \textbf{Penalit\`a di tempo}: $-0{,}1$ per passo, per incentivare la rapidit\`a.
+  \item \textbf{Prossimit\`a alla costa}: rampa lineare da $0$ (a $30\,$m dalla terra) fino a
+        $-15$ (sul bordo).
+  \item \textbf{Stagnazione} (solo \texttt{full}): se in una finestra di passi la distanza
+        minima non migliora abbastanza, una penalit\`a scoraggia il vagare; una variante
+        \emph{direzionale} penalizza i percorsi in cui lo spostamento netto \`e piccolo
+        rispetto a quello totale (moto inefficiente).
+\end{itemize}
+
+Le tre varianti si ottengono attivando o disattivando questi componenti (parametro
+\texttt{reward\_mode}):
+\begin{description}[leftmargin=1.4em, style=nextline]
+    \item[\texttt{full}] tutti i componenti: distanza \emph{quadratica} con zone multiplier e
+          retreat asymmetry, allineamento a vento/corrente e le penalit\`a di stagnazione.
+    \item[\texttt{base}] distanza \emph{lineare} e simmetrica; rimossi zone multiplier, retreat
+          asymmetry e stagnazione. Allineamento a vento e corrente ancora attivi.
+    \item[\texttt{minimal}] come \texttt{base}, ma con l'allineamento a vento e corrente
+          \emph{rimosso}. Restano i soli segnali essenziali: raggiungimento ($+100$), uscita
+          dal dominio ($-10$), distanza lineare, gradiente di concentrazione ($\pm 0{,}05$),
+          tempo ($-0{,}1$/step) e prossimit\`a alla costa. Nel codice questa variante
+          corrisponde a \texttt{reward\_mode = "base\_no\_wind\_reward"}.
+\end{description}
+
+In codice, l'assemblaggio del reward e i punti in cui le varianti divergono sono:
+
+\begin{lstlisting}
+def _compute_reward(self):
+    r = 0.0
+    if self._source_reached():                    # 1) raggiungimento
+        r += 100.0 + max(0, (N_max - k) / N_max * 50)   # (+ bonus di tempo)
+    if self._out_of_bounds():                     # 2) fuori dominio
+        r += -10.0
+    r += self._distance_reward(d, d_prev)         # 3) distanza
+    r += 0.05 if conc > prev_conc else -0.05      # 4) gradiente conc.
+    if self.reward_mode != "base_no_wind_reward": # 5) allineamento (no in minimal)
+        r += self._alignment_reward(v, wind, current)
+    r += -0.1                                     # 6) tempo
+    r += self._land_proximity_penalty(d_land)     # 7) prossimita' costa
+    if self.reward_mode == "full":                # 8) stagnazione (solo full)
+        r += self._stagnation_penalty(dist_history)
+    return r
+\end{lstlisting}
+
+Il termine di distanza \`e l'unico a cambiare \emph{forma} tra le varianti:
+
+\begin{lstlisting}
+def _distance_reward(self, d, d_prev):
+    K = self.distance_reward_multiplier              # = 100
+    if self.reward_mode == "full":                   # potenziale quadratico
+        QMAX = 3000.0
+        raw  = ((QMAX - d)**2 - (QMAX - d_prev)**2) / QMAX**2
+        zone = self._distance_zone_multiplier(d)     # pesa di piu' vicino alla sorgente
+        mult = 1.0 if d <= d_prev else self.retreat_penalty_multiplier   # 3x se si allontana
+        return raw * zone * mult * K
+    else:                                            # base/minimal: LINEARE, simmetrico
+        return (d_prev - d) * K / 3000.0
+\end{lstlisting}
+
+L'allineamento a vento e corrente --- presente in \texttt{full} e \texttt{base}, assente in
+\texttt{minimal} --- premia il moto \emph{contro} il campo (controvento/controcorrente):
+
+\begin{lstlisting}
+def _alignment_reward(self, v, wind, current):
+    r = 0.0
+    for field in (wind, current):
+        n = np.linalg.norm(field)
+        if n > 1e-6:
+            align = np.dot(v, field) / n             # <0 = contro il campo = verso la sorgente
+            r += 0.05 if align < 0 else -0.05
+    return r
+\end{lstlisting}
+
+I tre modelli sono stati addestrati da zero con configurazione identica e valutati su
+1560 episodi ciascuno. La Tabella~\ref{tab:ablation} riporta il confronto.
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\small
+\begin{tabular}{L{3.5cm} C{2.6cm} C{2.6cm} C{2.6cm}}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{Metrica}} &
+\textcolor{white}{\textbf{base}} &
+\textcolor{white}{\textbf{full}} &
+\textcolor{white}{\textbf{minimal}} \\
+\midrule
+\rowcolor{rowalt}
+\textbf{SR globale} & 88{,}3\% & 95{,}6\% & \textbf{96{,}9\%} \\
+Step medi (succ.)   & 113{,}8 & 129{,}6 & 129{,}2 \\
+\midrule
+V0 & 99{,}5\% & 98{,}0\% & 100{,}0\% \\
+\rowcolor{rowalt}
+V1 & 95{,}4\% & 99{,}0\% & 99{,}0\% \\
+V2 & 67{,}9\% & 88{,}5\% & 88{,}7\% \\
+\rowcolor{rowalt}
+V3 & 90{,}3\% & 97{,}0\% & 99{,}7\% \\
+\midrule
+Q1/4 & 100{,}0\% & 100{,}0\% & 100{,}0\% \\
+\rowcolor{rowalt}
+Q1/2 & 74{,}4\% & 93{,}7\% & 93{,}5\% \\
+Q3/4 & 90{,}4\% & 93{,}0\% & 97{,}1\% \\
+\bottomrule
+\end{tabular}
+\caption{Confronto delle tre varianti di reward su 1560 episodi ciascuna.}
+\label{tab:ablation}
+\end{table}
+
+Il modello \texttt{minimal} ottiene il success rate pi\`u alto (\textbf{96{,}9\%}),
+superando sia \texttt{full} (95{,}6\%) sia \texttt{base} (88{,}3\%). Due osservazioni
+emergono. Primo, i componenti aggiuntivi della reward \texttt{full} (stagnation penalty,
+zone multiplier, retreat asymmetry) non producono un guadagno misurabile rispetto a una
+reward lineare pi\`u semplice. Secondo, il divario pi\`u significativo \`e tra
+\texttt{base} e \texttt{minimal} ($-8{,}6\%$ globale), imputabile ai reward di
+allineamento a vento e corrente: tali segnali assumono che la sorgente si trovi sempre
+controvento/controcorrente, ipotesi non valida in ambiente costiero complesso, e il
+segnale risultante entra in conflitto con il gradiente chimico in una frazione rilevante
+degli scenari. Il gradiente di concentrazione, calcolato direttamente sul campo simulato,
+incorpora gi\`a implicitamente l'effetto di vento e corrente. Il modello \texttt{minimal}
+\`e quindi adottato come modello di riferimento; le
+Figure~\ref{fig:rl_initdist}--\ref{fig:rl_dist} ne riportano l'analisi quantitativa.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.82\linewidth]{rl_initial_dist.png}
+  \caption{Distribuzione delle distanze iniziali di spawn --- modello \texttt{minimal}.
+           La success rate resta elevata su tutte le fasce di distanza iniziale (anche
+           oltre 2000\,m), a conferma che la politica generalizza indipendentemente dal
+           punto di partenza.}
+  \label{fig:rl_initdist}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.82\linewidth]{rl_sr_analysis.png}
+  \caption{Success rate per scenario di vento e chunk temporale --- modello
+           \texttt{minimal}. Quasi tutte le combinazioni sono risolte vicino al 100\%; le
+           uniche difficolt\`a residue --- comunque lievi --- restano su V2 e Q1/2, gli
+           stessi scenari critici per l'FCM.}
+  \label{fig:rl_sr}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.82\linewidth]{rl_success_time.png}
+  \caption{Distribuzione del tempo al successo --- modello \texttt{minimal}. La gran parte
+           degli episodi converge entro pochi minuti simulati, con una coda contenuta:
+           l'agente raggiunge la sorgente in modo rapido e consistente.}
+  \label{fig:rl_time}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.82\linewidth]{rl_distance_time.png}
+  \caption{Distanza media dalla sorgente nel tempo --- modello \texttt{minimal}. La curva
+           dei successi decresce in modo netto e monotono fino all'azzeramento; i rari
+           fallimenti restano una frazione marginale, in netto contrasto con i metodi del
+           gradiente.}
+  \label{fig:rl_dist}
+\end{figure}
+
+\subsection{Catena a velocit\`a variabile}
+\label{sec:rl_velocity}
+
+Nei modelli visti finora la velocit\`a \`e un parametro fisso del veicolo e l'agente
+sceglie solo la direzione. \`E una limitazione: un AUV reale pu\`o modulare la spinta, e
+non \`e detto che andare sempre al massimo sia ottimale. Si \`e quindi reso la velocit\`a
+una \textbf{scelta dell'agente}.
+
+\paragraph{Spazio d'azione.} Lo spazio d'azione passa da 8 direzioni (passo fisso) a
+$\text{Discrete}(8 \times K)$ con $K = 5$: ogni azione codifica \emph{congiuntamente} una
+delle 8 direzioni e uno dei 5 livelli di velocit\`a
+$\{0{,}2,\,0{,}4,\,\ldots,\,1{,}0\}\cdot v_{\max}$. L'agente sceglie cos\`i a ogni passo
+non solo \emph{dove} andare ma anche \emph{quanto} spingere. La velocit\`a ottimale non
+\`e imposta da una regola: emerge \textbf{implicitamente} dall'ottimizzazione del ritorno
+--- l'agente potrebbe apprendere, ad esempio, che rallentare in prossimit\`a della
+sorgente o in controcorrente conviene. La singola azione intera viene decodificata in una
+coppia (direzione, velocit\`a) tramite divisione e resto per $K$:
+
+\begin{lstlisting}
+def _decode_action(self, action):        # action in {0, ..., 8K-1}
+    K = self.config.n_velocity_levels    # K = 5 livelli
+    dir_idx = action // K                # una delle 8 direzioni
+    vel_idx = action %  K                # livello di velocita'
+    velocity = (vel_idx + 1) / K * self.config.max_velocity   # in (0, v_max]
+    return dir_idx, velocity             # dove andare + quanto spingere
+\end{lstlisting}
+
+\paragraph{Perch\'e una catena di warm-start.} Passare direttamente da un modello a passo
+fisso ($1\,\text{m/s}$) a uno con velocit\`a libera fino a $5\,\text{m/s}$ \`e un salto
+difficile: lo spazio d'azione si quintuplica (da 8 a 40 azioni) e la dinamica
+dell'episodio cambia. L'addestramento \`e perci\`o organizzato a \textbf{catena}, in modo
+che ogni incremento sia un piccolo aggiustamento su una policy gi\`a competente anzich\'e
+un apprendimento da zero:
+\begin{itemize}[leftmargin=1.4em, itemsep=2pt]
+    \item il primo stadio ($v_{\max}{=}1$) parte dal modello \texttt{minimal} a passo
+          fisso, ne \textbf{trapianta il corpo} (le rappresentazioni gi\`a apprese) ed
+          espande la testa d'azione da 8 a 40 uscite; l'agente impara a modulare la
+          velocit\`a entro lo stesso tetto di $1\,\text{m/s}$;
+    \item ogni stadio successivo ($v_{\max}{=}2,\ldots,5$) riparte dal precedente
+          (fine-tuning) e alza progressivamente il tetto di velocit\`a.
+\end{itemize}
+Ogni stadio \`e valutato su 1560 episodi. Il trapianto della testa d'azione replica i logit
+di ciascuna direzione sui $K$ livelli, favorendo all'avvio il livello $v_{\max}$ tramite il
+bias (variante \emph{max-bias}), cos\`i che la policy parta equivalente a quella a passo
+fisso:
+
+\begin{lstlisting}
+# corpo (MLP 256x256) e critico: copiati invariati dal modello minimal.
+# testa azione (8 -> 8*K): ogni direzione replicata sui K livelli di velocita'.
+for d in range(n_directions):                  # 8 direzioni
+    for k in range(K):                         # 5 livelli di velocita'
+        row = d * K + k
+        W[row] = w_min[d]                      # stessi pesi della direzione d
+        B[row] = b_min[d] - (0.0 if k == K-1 else suppress)  # bias sul livello v_max
+\end{lstlisting}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,
+  box/.style={draw, rounded corners, minimum height=1.05cm, align=center, inner sep=4pt},
+  copied/.style={box, fill=green!14, minimum width=1.7cm},
+  body/.style={box, fill=green!14, minimum width=2.7cm},
+  changed/.style={box, fill=orange!28, minimum width=1.9cm},
+  flow/.style={-{Latex[length=2mm]}, thick},
+  map/.style={-{Latex[length=2mm]}, densely dashed, gray}
+]
+% --- riga Minimal ---
+\node[copied] (m0) {obs\\(116)};
+\node[body, right=0.7cm of m0] (mb) {corpo MLP\\$256\times256$ (tanh)};
+\node[changed, right=0.7cm of mb] (mh) {testa azione\\\textbf{8} (dir.)};
+\draw[flow] (m0)--(mb); \draw[flow] (mb)--(mh);
+\node[align=right, anchor=east] at ([xshift=-0.25cm]m0.west) {\textbf{minimal}\\passo fisso};
+% --- riga v1 ---
+\node[copied, below=2.0cm of m0] (v0) {obs\\(116)};
+\node[body, right=0.7cm of v0] (vb) {corpo MLP\\$256\times256$ (tanh)};
+\node[changed, right=0.7cm of vb] (vh) {testa azione\\\textbf{40} (dir$\times$vel)};
+\draw[flow] (v0)--(vb); \draw[flow] (vb)--(vh);
+\node[align=right, anchor=east] at ([xshift=-0.25cm]v0.west) {\textbf{v1}\\vel.\ adattiva};
+% --- mappature ---
+\draw[map] (m0)--(v0) node[midway, fill=white, inner sep=1pt]{copia};
+\draw[map] (mb)--(vb) node[midway, fill=white, inner sep=1pt]{copia};
+\draw[-{Latex[length=2mm]}, thick, orange!75!black] (mh)--(vh)
+   node[midway, fill=white, inner sep=1pt, text=black]{espansione $8\!\to\!40$};
+\end{tikzpicture}
+\caption{Warm-start del primo stadio (\texttt{minimal} $\to$ v1). Il \textbf{corpo} della
+         rete (ingresso a 116 dim.\ e MLP $256\times256$) viene \textbf{copiato} invariato
+         (verde); solo la \textbf{testa d'azione} viene \textbf{espansa} da 8 a 40 uscite
+         (arancio): ogni direzione viene replicata sui 5 livelli di velocit\`a, con bias
+         iniziale verso $v_{\max}$ (all'avvio la policy equivale a quella a passo fisso).}
+\label{fig:rl_warmstart_vel}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  font=\scriptsize,
+  vel/.style={draw, rounded corners, fill=blue!7, minimum width=2.4cm, minimum height=0.52cm, align=center, inner sep=1pt},
+  velmax/.style={draw, rounded corners, fill=orange!30, minimum width=2.4cm, minimum height=0.52cm, align=center, inner sep=1pt},
+  dir/.style={draw, rounded corners, fill=green!16, minimum width=2.3cm, minimum height=0.95cm, align=center},
+  a/.style={-{Latex[length=1.5mm]}, gray}
+]
+\node[dir] (d) {direzione $d_i$\\(1 delle 8)};
+\node[vel, right=1.9cm of d] (v3) {$(d_i,\;0{,}6\,v_{\max})$};
+\node[vel, above=0.1cm of v3] (v2) {$(d_i,\;0{,}4\,v_{\max})$};
+\node[vel, above=0.1cm of v2] (v1) {$(d_i,\;0{,}2\,v_{\max})$};
+\node[vel, below=0.1cm of v3] (v4) {$(d_i,\;0{,}8\,v_{\max})$};
+\node[velmax, below=0.1cm of v4] (v5) {$(d_i,\;v_{\max})$};
+\foreach \n in {v1,v2,v3,v4,v5} \draw[a] (d.east)--(\n.west);
+\node[anchor=west, align=left, text width=3.5cm] at ([xshift=0.5cm]v3.east)
+  {peso della direzione \textbf{replicato} sui 5 livelli; il livello $v_{\max}$ (arancio)
+   riceve il \textbf{bias} iniziale};
+\node[below=0.7cm of d.south, anchor=north, align=center, text width=3.3cm]
+  {ripetuto per le \textbf{8 direzioni}\\$\Rightarrow\; 8\times5 = \mathbf{40}$ uscite};
+\end{tikzpicture}
+\caption{Focus sulla testa d'azione (espansione $8\to40$). Ciascuna delle 8 direzioni
+         della testa \texttt{minimal} viene sdoppiata nei 5 livelli di velocit\`a
+         $(d_i, v_k)$: i pesi sono replicati e il livello $v_{\max}$ \`e favorito
+         all'avvio, cos\`i la policy parte equivalente a quella a passo fisso.}
+\label{fig:rl_testa_azione}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.6}
+\setlength{\tabcolsep}{3pt}
+\small
+\begin{tabular}{C{1.4cm} C{1.0cm} C{2.2cm} C{1.15cm} C{1.15cm} C{1.15cm} C{1.15cm} C{1.15cm} C{1.15cm} C{1.15cm}}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{$v_{\max}$}} &
+\textcolor{white}{\textbf{SR\%}} &
+\textcolor{white}{\textbf{Step (min)}} &
+\textcolor{white}{\textbf{V0}} &
+\textcolor{white}{\textbf{V1}} &
+\textcolor{white}{\textbf{V2}} &
+\textcolor{white}{\textbf{V3}} &
+\textcolor{white}{\textbf{Q1/4}} &
+\textcolor{white}{\textbf{Q1/2}} &
+\textcolor{white}{\textbf{Q3/4}} \\
+\midrule
+1\,m/s & 97{,}1 & 119{,}6 (19{,}9) & 99{,}5 & 100{,}0 & 89{,}7 & 99{,}2 & 100{,}0 & 95{,}0 & 96{,}3 \\
+\rowcolor{rowalt}
+2\,m/s & 99{,}7 & 69{,}5 (11{,}6) & 100{,}0 & 99{,}5 & 99{,}2 & 100{,}0 & 100{,}0 & 99{,}0 & 100{,}0 \\
+3\,m/s & 99{,}9 & 46{,}9 (7{,}8) & 100{,}0 & 100{,}0 & 99{,}7 & 100{,}0 & 100{,}0 & 99{,}8 & 100{,}0 \\
+\rowcolor{rowalt}
+4\,m/s & 99{,}9 & 38{,}2 (6{,}4) & 100{,}0 & 100{,}0 & 99{,}5 & 100{,}0 & 100{,}0 & 100{,}0 & 99{,}6 \\
+\rowcolor{best}
+\textbf{5\,m/s} & \textbf{99{,}9} & \textbf{27{,}8 (4{,}6)} & 100{,}0 & 100{,}0 & \textbf{99{,}7} & 100{,}0 & 100{,}0 & 100{,}0 & 99{,}8 \\
+\bottomrule
+\end{tabular}
+\caption{Catena PPO a velocit\`a variabile (1560 episodi per stadio, $K{=}5$).
+         ``Step (min)'' riporta gli step medi al successo e, tra parentesi, i minuti
+         corrispondenti ($1\,\text{step}=10\,\text{s}$). All'aumentare di $v_{\max}$
+         crescono SR e velocit\`a (step medi da $\sim$20 a $\sim$5\,min).}
+\label{tab:rl_velocity}
+\end{table}
+
+Gi\`a il primo stadio ($v_{\max}{=}1$, equivalente in velocit\`a al modello a passo
+fisso) raggiunge il $97{,}1\%$, superando il $96{,}9\%$ di \texttt{minimal}: rendere la
+velocit\`a una scelta non costa nulla nemmeno a parit\`a di tetto. Alzare $v_{\max}$
+produce due benefici congiunti: l'SR sale al $99{,}7$--$99{,}9\%$ e gli step medi al
+successo crollano da 120 a 28 (oltre $4\times$ pi\`u veloce). Il guadagno maggiore \`e su
+\textbf{V2}, lo scenario a corrente forte: la velocit\`a netta dell'agente \`e
+$v_{\text{agente}} - v_{\text{corrente}}$, e con pi\`u velocit\`a disponibile l'agente
+batte pi\`u facilmente la corrente contraria, passando da $89{,}7\%$ a $99{,}7\%$. A
+partire da $v_{\max}{=}3$ le prestazioni sono sostanzialmente sature ($\approx 99{,}9\%$):
+l'ulteriore margine di velocit\`a serve solo a ridurre il tempo al successo, non
+l'affidabilit\`a.
+
+\paragraph{Andamento della velocit\`a media.} In media l'agente resta prossimo a
+$v_{\max}$ a ogni stadio; la modulazione (gli avvallamenti della media e l'ampiezza della
+banda) \textbf{non \`e monot\`ona} in $v_{\max}$: \`e \textbf{massima agli stadi
+intermedi} ($v_{\max}{=}2,3$) e \textbf{quasi assente agli estremi}. A $v_{\max}{=}1$ il
+passo pieno ($10\,\text{m}$) \`e molto minore del raggio di successo ($50\,\text{m}$): non
+c'\`e rischio di scavalcare la sorgente, andare al massimo \`e quasi sempre sicuro e la
+media resta piatta. A $v_{\max}{=}5$ il passo pieno ($50\,\text{m}$) eguaglia il raggio e,
+grazie alla cattura sul segmento percorso, una falcata piena centra comunque il bersaglio:
+di nuovo conviene il massimo. Ai valori intermedi, invece, il passo diventa confrontabile
+con la scala di avvicinamento e i rallentamenti correttivi si fanno pi\`u evidenti.
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}{0.62\linewidth}
+    \includegraphics[width=\linewidth]{velocity_mean_over_time_v1.png}
+    \caption{$v_{\max}{=}1\,\text{m/s}$}
+  \end{subfigure}
+
+  \vspace{6pt}
+  \begin{subfigure}{0.62\linewidth}
+    \includegraphics[width=\linewidth]{velocity_mean_over_time_v3.png}
+    \caption{$v_{\max}{=}3\,\text{m/s}$}
+  \end{subfigure}
+
+  \vspace{6pt}
+  \begin{subfigure}{0.62\linewidth}
+    \includegraphics[width=\linewidth]{velocity_mean_over_time_v5.png}
+    \caption{$v_{\max}{=}5\,\text{m/s}$}
+  \end{subfigure}
+  \caption{PPO adattivo: velocit\`a media (su tutte le run) nel tempo, stadi
+           $v_{\max}{=}1{,}3{,}5$. In media l'agente resta prossimo a $v_{\max}$ ma modula
+           il passo con rallentamenti correttivi, pi\`u evidenti allo stadio intermedio e
+           quasi assenti agli estremi.}
+  \label{fig:rl_velocity_time}
+\end{figure}
+
+\subsection{Formazione a singola vs.\ doppia corona}
+\label{sec:rl_dual}
+
+La doppia corona (Tabella~\ref{tab:obs}) aggiunge alla corona locale a
+$r_s = 20\,\text{m}$ una \textbf{seconda corona} di 8 slave a $r_{s2} = 50\,\text{m}$, per
+dare al master informazione sul plume a scala spaziale pi\`u larga. La domanda \`e:
+questa seconda corona \textbf{serve}, e \textbf{a quali velocit\`a}?
+
+\paragraph{Un primo confronto, e perch\'e \`e viziato.} Il primo tentativo ha addestrato
+il modello a doppia corona \emph{da zero}, con la stessa configurazione del riferimento
+\texttt{minimal} (Tabella~\ref{tab:dualring}).
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\small
+\begin{tabular}{L{4.2cm} C{3.3cm} C{3.3cm}}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{Metrica}} &
+\textcolor{white}{\textbf{Singola corona (116)}} &
+\textcolor{white}{\textbf{Doppia corona (196)}} \\
+\midrule
+\rowcolor{rowalt}
+SR globale & \textbf{96{,}9\%} & 93{,}0\% \\
+Step medi (succ.) & 129{,}2 & \textbf{114{,}4} \\
+\midrule
+V1 & \textbf{99{,}0\%} & 90{,}3\% \\
+\rowcolor{rowalt}
+V2 & \textbf{88{,}7\%} & 82{,}3\% \\
+Q1/2 & \textbf{93{,}5\%} & 86{,}2\% \\
+\bottomrule
+\end{tabular}
+\caption{Primo confronto fra singola corona (\texttt{minimal}, $r_s{=}20\,\text{m}$) e
+         doppia corona ($20\,\text{m}$ + $50\,\text{m}$), entrambe a passo fisso e
+         addestrate \textbf{da zero}. Il confronto \`e viziato: cambia insieme il sensore e
+         la difficolt\`a di ottimizzare da zero una rete pi\`u grande. La
+         Tabella~\ref{tab:dual_vmax} lo rif\`a in modo controllato.}
+\label{tab:dualring}
+\end{table}
+
+Letto cos\`i, il risultato sembrerebbe chiudere la questione: la doppia corona
+\emph{non} supera il riferimento, con un calo di $3{,}9$ punti concentrato su V1, V2 e
+Q1/2. Il confronto \`e per\`o \textbf{viziato}, perch\'e cambia due cose insieme: il
+sensore \emph{e} la dimensione della rete da ottimizzare da zero. Una rete con 80 ingressi
+in pi\`u \`e pi\`u difficile da addestrare a partire da pesi casuali, e il calo osservato
+confonde l'effetto dell'informazione con quello dell'ottimizzazione. Non si pu\`o quindi
+concludere che la seconda corona sia dannosa: si pu\`o solo dire che addestrare da zero
+una rete pi\`u grande rende meno.
+
+\paragraph{Un protocollo equo: warm-start.} Per isolare il \emph{solo} effetto del
+sensore, la doppia corona \`e ottenuta per \textbf{warm-start dal corrispondente modello a
+singola corona}: per ogni $v_{\max} \in \{1,\ldots,5\}$ il modello a doppia corona parte
+da quello a singola corona di pari velocit\`a, allargando lo strato di ingresso da 116 a
+196 dimensioni e \textbf{azzerando} le colonne della corona-2. All'avvio la rete \`e
+quindi \emph{identica} alla singola corona --- ignora la corona-2 --- e impara durante il
+fine-tuning se e come usarla. Ogni eventuale differenza \`e cos\`i attribuibile al solo
+sensore, non al protocollo. Ogni modello \`e valutato su 1560 episodi. L'allargamento dello
+strato d'ingresso conserva le colonne condivise e azzera quelle della corona-2:
+
+\begin{lstlisting}
+# doppia corona (196) warm-startata dalla singola (116):
+# tutti i pesi copiati dal single; nello strato d'ingresso le colonne condivise
+# sono rimappate e le 80 colonne della corona-2 sono AZZERATE.
+W_in_dual[:, shared_cols] = W_in_single    # resto identico al single
+W_in_dual[:, ring2_cols]  = 0.0            # corona-2 non contribuisce all'avvio
+# le statistiche di VecNormalize della corona-2 restano neutre (media 0, var 1).
+\end{lstlisting}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,
+  box/.style={draw, rounded corners, minimum height=1.05cm, align=center, inner sep=4pt},
+  copied/.style={box, fill=green!14},
+  body/.style={box, fill=green!14, minimum width=2.7cm},
+  head/.style={box, fill=green!14, minimum width=1.9cm},
+  changed/.style={box, fill=orange!28},
+  flow/.style={-{Latex[length=2mm]}, thick},
+  map/.style={-{Latex[length=2mm]}, densely dashed, gray}
+]
+% --- riga v1 (singola corona) ---
+\node[copied, minimum width=1.9cm] (s0) {obs single\\(116)};
+\node[body, right=0.7cm of s0] (sb) {corpo MLP\\$256\times256$ (tanh)};
+\node[head, right=0.7cm of sb] (sh) {testa azione\\\textbf{40}};
+\draw[flow] (s0)--(sb); \draw[flow] (sb)--(sh);
+\node[align=right, anchor=east] at ([xshift=-0.25cm]s0.west) {\textbf{v1}\\singola corona};
+% --- riga doppia corona: ingresso segmentato 116 + 80 ---
+\node[copied, below=2.0cm of s0, minimum width=1.15cm] (d0a) {116};
+\node[changed, right=0pt of d0a, minimum width=1.15cm] (d0b) {+80\\corona-2\\(=0)};
+\node[body, right=0.7cm of d0b] (db) {corpo MLP\\$256\times256$ (tanh)};
+\node[head, right=0.7cm of db] (dh) {testa azione\\\textbf{40}};
+\draw[flow] (d0b)--(db); \draw[flow] (db)--(dh);
+\node[align=right, anchor=east] at ([xshift=-0.25cm]d0a.west) {\textbf{doppia}\\corona (196)};
+% --- mappature ---
+\draw[-{Latex[length=2mm]}, thick, orange!75!black] (s0.south)--(d0a.north)
+   node[midway, xshift=1.5cm, fill=white, inner sep=1.5pt, text=black]{ingresso $116\!\to\!196$};
+\draw[map] (sb)--(db) node[midway, fill=white, inner sep=1pt]{copia};
+\draw[map] (sh)--(dh) node[midway, fill=white, inner sep=1pt]{copia};
+\end{tikzpicture}
+\caption{Warm-start della doppia corona (esempio a $v_{\max}{=}1$; a ogni livello \`e
+         analogo, dal rispettivo modello a singola corona). \textbf{Corpo} e \textbf{testa
+         d'azione} sono \textbf{copiati} invariati (verde); si allarga solo lo
+         \textbf{strato d'ingresso} da 116 a 196 (arancio), aggiungendo 80 colonne per la
+         corona-2 con \textbf{pesi inizializzati a zero}. All'avvio la rete \`e identica a
+         v1 e ignora la corona-2; il fine-tuning decide se e come usarla.}
+\label{fig:rl_warmstart_dual}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\small
+\begin{tabular}{C{1.3cm} C{1.5cm} C{1.5cm} C{2.6cm} C{2.6cm} C{1.7cm}}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{$v_{\max}$}} &
+\textcolor{white}{\textbf{SR sing.}} &
+\textcolor{white}{\textbf{SR dopp.}} &
+\textcolor{white}{\textbf{Step sing.}} &
+\textcolor{white}{\textbf{Step dopp.}} &
+\textcolor{white}{\textbf{$\Delta$step}} \\
+\midrule
+1 & 97{,}1\% & 95{,}8\% & 119{,}6 (19{,}9\,min) & 97{,}8 (16{,}3\,min) & \textcolor{green!50!black}{\textbf{$-$18{,}2\%}} \\
+\rowcolor{rowalt}
+2 & 99{,}7\% & 99{,}7\% & 69{,}5 (11{,}6\,min) & 49{,}8 (8{,}3\,min) & \textcolor{green!50!black}{\textbf{$-$28{,}3\%}} \\
+3 & 99{,}9\% & \textbf{100{,}0\%} & 46{,}9 (7{,}8\,min) & 31{,}3 (5{,}2\,min) & \textcolor{green!50!black}{\textbf{$-$33{,}2\%}} \\
+\rowcolor{rowalt}
+4 & 99{,}9\% & 99{,}9\% & 38{,}2 (6{,}4\,min) & 25{,}3 (4{,}2\,min) & \textcolor{green!50!black}{\textbf{$-$33{,}6\%}} \\
+5 & 99{,}9\% & \textbf{100{,}0\%} & 27{,}8 (4{,}6\,min) & 20{,}9 (3{,}5\,min) & \textcolor{green!50!black}{\textbf{$-$24{,}8\%}} \\
+\bottomrule
+\end{tabular}
+\caption{Singola vs.\ doppia corona a ogni $v_{\max}$ (ogni doppia corona warm-startata
+         dal modello a singola corona omologo; 1560 episodi per cella). ``Step'' = step
+         medi al successo (minuti tra parentesi). $\Delta$step = variazione relativa dei
+         passi (verde = doppia pi\`u veloce).}
+\label{tab:dual_vmax}
+\end{table}
+
+Il quadro \textbf{si ribalta} rispetto alla lettura precedente, e per due motivi distinti.
+Primo, \textbf{il costo di SR \`e confinato a $v_{\max}{=}1$}: gi\`a con il solo
+warm-start la penalit\`a scende da $-3{,}9$ a $-1{,}3$ --- prova che gran parte del calo
+originale era difficolt\`a di ottimizzazione, non informazione dannosa --- e ai livelli
+superiori non si ripresenta affatto: a v2--v5 l'SR della doppia corona \`e \emph{pari o
+superiore} a quello della singola. Secondo, \textbf{il guadagno di step non si assottiglia
+ma cresce}: da $-18\%$ (v1) sale a un picco di $\sim -34\%$ (v3--v4), per poi ridursi a
+$-25\%$ a v5 per effetto pavimento (la singola \`e gi\`a a $\sim 28$ step, vicino al
+minimo geometrico).
+
+\paragraph{Sguardo ravvicinato a $v_{\max}{=}1$.} A $v_{\max}{=}1$ --- l'unico livello con
+un costo di SR --- il residuo $-1{,}3$ \`e concentrato in \textbf{V2}
+($89{,}7 \to 86{,}2$) e \textbf{Q3/4} ($96{,}3 \to 90{,}4$), mentre su Q1/2 la doppia
+corona \`e in vantaggio ($+2{,}1$). Appaiando i 1560 episodi per (sorgente, vento, chunk,
+episodio) si isolano i casi in cui le due configurazioni divergono
+(Tabella~\ref{tab:dual_paired}).
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\small
+\begin{tabular}{L{6.5cm} C{3.0cm}}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{Esito appaiato}} &
+\textcolor{white}{\textbf{N. episodi}} \\
+\midrule
+\rowcolor{rowalt}
+Entrambi successo                       & 1463 \\
+Entrambi fallimento                     & 13 \\
+\rowcolor{worst}
+Singola OK, \textbf{doppia FALLISCE}    & \textbf{52} \\
+Singola fallisce, doppia OK             & 32 \\
+\midrule
+\textbf{Netto}                          & \textbf{$-20$ ($=-1{,}3\%$)} \\
+\bottomrule
+\end{tabular}
+\caption{Matrice degli esiti appaiati singola vs.\ doppia corona a $v_{\max}{=}1$.}
+\label{tab:dual_paired}
+\end{table}
+
+I 52 fallimenti differenziali hanno una firma nettissima (Figura~\ref{fig:dual_v2}): sono \textbf{tutti
+\texttt{timeout}} (nessuna uscita dal dominio), l'$81\%$ \`e su \textbf{vento V2} (42/52)
+nei chunk a corrente sostenuta, avvengono su \textbf{spawn lontani} (distanza iniziale
+media $1070\,\text{m}$ contro $690\,\text{m}$ della media generale) e \textbf{non sono
+near-miss}: $36/52$ non scendono mai sotto $150\,\text{m}$ dalla sorgente (distanza minima
+mediana $322\,\text{m}$). L'agente, in altre parole, \textbf{si perde}; non ``non riesce a
+frenare''. Il crollo \`e tutto nel regime ``lontano $+$ corrente forte'': in V2 la SR per
+fascia di distanza iniziale passa da $+1{,}1$ (300--700\,m) a $-15{,}2$ (1100--1600\,m)
+fino a $-83{,}3$ (oltre 1600\,m).
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}{0.49\linewidth}
+    \includegraphics[width=\linewidth]{sr_vs_initdist_V2.png}
+    \caption{SR per fascia di distanza iniziale (V2).}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}{0.49\linewidth}
+    \includegraphics[width=\linewidth]{diff_fail_mindist.png}
+    \caption{Distanza minima nei fallimenti differenziali.}
+  \end{subfigure}
+  \caption{Firma del costo di affidabilit\`a della doppia corona a $v_{\max}{=}1$ nello
+           scenario V2. A sinistra: sugli spawn vicini la doppia corona \`e pari o migliore,
+           ma sulle fasce lontane ($>$1100\,m) la SR crolla rispetto alla singola. A destra:
+           i fallimenti differenziali non sono \emph{near-miss} --- la distanza minima dalla
+           sorgente resta elevata, l'agente ``si perde'' anzich\'e non riuscire a frenare.}
+  \label{fig:dual_v2}
+\end{figure}
+
+Vanno per\`o letti anche i \textbf{32 casi opposti}, in cui la singola fallisce e la
+doppia riesce. Anch'essi sono tutti timeout della singola e concentrati in V2 (28/32), ma
+con firma \emph{complementare}: il chunk dominante \`e \textbf{Q1/2} (25/32) anzich\'e
+Q3/4, e gli spawn sono a distanza \textbf{moderata} (media $749\,\text{m}$ contro
+$1070\,\text{m}$). La doppia corona non \`e dunque uniformemente peggiore:
+\textbf{redistribuisce} i successi. Sui chunk Q1/2 il segnale a 50\,m aiuta a tenere la
+rotta ed \`e in attivo (25 recuperi contro 14 perdite); su Q3/4, con spawn pi\`u lontani e
+corrente pi\`u sostenuta, lo stesso segnale inganna ed \`e in passivo (7 recuperi contro
+38 perdite). Il bilancio netto, $-20$ episodi, \`e uno \textbf{spostamento della frontiera
+di successo}, non una regressione generalizzata.
+
+\paragraph{Interpretazione.} Il filo che tiene insieme tutti i risultati \`e uno solo: la
+corona-2 sente il campo \textbf{pi\`u lontano} ($50\,\text{m}$), e il valore di questa
+``vista lontana'' dipende da \emph{quanto lontano l'agente sta per muoversi}, cio\`e dalla
+lunghezza del passo. A $v_{\max}$ alto le falcate sono grandi (fino a $50\,\text{m}$) e
+una falcata mal puntata scavalca la rotta, costando correzioni; la corona-2, vedendo
+esattamente ``un passo avanti'', permette di puntarle bene ed evita gli \emph{overshoot}
+che rallentano la singola --- da cui il guadagno crescente con $v_{\max}$. Il costo di
+affidabilit\`a a $v_{\max}{=}1$ \`e lo stesso meccanismo ribaltato: a passi piccoli
+l'agente resta pi\`u a lungo immerso nel campo e in V2, con plume fortemente avvettato, il
+segnale a 50\,m pu\`o puntare \emph{lungo la corrente} anzich\'e verso la sorgente; sugli
+spawn lontani l'agente si fida del segnale distante, sbaglia direzione e va in timeout.
+Alle velocit\`a superiori attraversa quel regime troppo in fretta perch\'e l'errore si
+accumuli, e il costo sparisce.
+
+Vale infine la pena chiedersi perch\'e l'agente non \emph{ignori} semplicemente la
+corona-2 quando non conviene. Ignorarla equivarrebbe a pesi d'ingresso esattamente nulli,
+una soluzione che la discesa del gradiente non raggiunge: anche partendo da zero, come nel
+warm-start, i gradienti spostano quei pesi. Soprattutto, usarla \emph{aumenta} il reward
+--- lo \texttt{step\_penalty} premia l'arrivare prima e la corona-2 d\`a traiettorie pi\`u
+dirette --- quindi l'ottimizzatore \textbf{sceglie} di usarla. In sintesi: la seconda
+corona \`e un \textbf{vantaggio netto a partire da $v_{\max}{=}2$} (stessa affidabilit\`a,
+$25$--$34\%$ di passi in meno), e solo a $v_{\max}{=}1$ si osserva un piccolo scambio
+robustezza/velocit\`a. La conclusione del primo confronto --- ``per questo dominio la
+singola corona \`e sufficiente'' --- era un artefatto dell'aver addestrato da zero e
+dell'aver guardato un solo livello di velocit\`a.
+
+\subsection{Test di modulazione: raggio di successo a 10\,m}
+\label{sec:rl_r10}
+
+I risultati della catena a velocit\`a variabile mostrano che, in media, l'agente resta
+prossimo a $v_{\max}$. Sorge quindi una domanda: l'agente \emph{sa} davvero rallentare, o
+gli conviene sempre andare al massimo? Con un raggio di successo di $50\,\text{m}$ la
+domanda \`e mal posta, perch\'e il raggio \`e grande quanto un passo pieno
+($50\,\text{m}$ a $v_{\max}{=}5$): l'agente pu\`o \textbf{piombare} sulla sorgente a piena
+velocit\`a e centrare comunque il bersaglio, senza alcun bisogno di rallentare.
+
+Per rendere il compito pi\`u stringente si \textbf{restringe il raggio di successo a
+$10\,\text{m}$}. Ora un passo pieno da $50\,\text{m}$ \textbf{scavalca} un bersaglio da
+$10\,\text{m}$, e centrarlo non \`e pi\`u banale: per riuscirci l'agente impara a
+\emph{rallentare} in avvicinamento, oppure adotta un'altra strategia? Il modello \`e
+ottenuto per fine-tuning a partire dallo stadio $v_{\max}{=}5$, cambiando \emph{solo} il
+raggio di successo ($50 \to 10\,\text{m}$), con soglia di stagnazione ridotta,
+$lr = 10^{-4}$ e curriculum $\alpha = 0{,}8$, per $2$\,M timestep; la valutazione \`e su
+1560 episodi, identica agli altri stadi.
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.6}
+\setlength{\tabcolsep}{2pt}
+\small
+\begin{tabular}{C{2.4cm} C{1.0cm} C{2.1cm} C{1.1cm} C{1.1cm} C{1.1cm} C{1.1cm} C{1.1cm} C{1.1cm} C{1.1cm}}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{Raggio}} &
+\textcolor{white}{\textbf{SR\%}} &
+\textcolor{white}{\textbf{Step (min)}} &
+\textcolor{white}{\textbf{V0}} &
+\textcolor{white}{\textbf{V1}} &
+\textcolor{white}{\textbf{V2}} &
+\textcolor{white}{\textbf{V3}} &
+\textcolor{white}{\textbf{Q1/4}} &
+\textcolor{white}{\textbf{Q1/2}} &
+\textcolor{white}{\textbf{Q3/4}} \\
+\midrule
+$v_{\max}{=}5$, 50\,m & 99{,}9 & 27{,}8 (4{,}6) & 100{,}0 & 100{,}0 & 99{,}7 & 100{,}0 & 100{,}0 & 100{,}0 & 99{,}8 \\
+\rowcolor{rowalt}
+$v_{\max}{=}5$, 10\,m &
+  \shortstack{99{,}2\\[-1pt]{\scriptsize\textcolor{red!60!black}{$-$0{,}7}}} &
+  \shortstack{54{,}8 (9{,}1)\\[-1pt]{\scriptsize\textcolor{gray!35!black}{$+$27{,}0}}} &
+  \shortstack{100{,}0\\[-1pt]{\scriptsize 0{,}0}} &
+  \shortstack{98{,}5\\[-1pt]{\scriptsize\textcolor{red!60!black}{$-$1{,}5}}} &
+  \shortstack{98{,}5\\[-1pt]{\scriptsize\textcolor{red!60!black}{$-$1{,}2}}} &
+  \shortstack{100{,}0\\[-1pt]{\scriptsize 0{,}0}} &
+  \shortstack{98{,}7\\[-1pt]{\scriptsize\textcolor{red!60!black}{$-$1{,}3}}} &
+  \shortstack{99{,}4\\[-1pt]{\scriptsize\textcolor{red!60!black}{$-$0{,}6}}} &
+  \shortstack{99{,}6\\[-1pt]{\scriptsize\textcolor{red!60!black}{$-$0{,}2}}} \\
+\bottomrule
+\end{tabular}
+\caption{Effetto del restringimento del raggio di successo ($50 \to 10\,\text{m}$) sullo
+         stadio $v_{\max}{=}5$ (1560 episodi). Sotto ogni valore a 10\,m, il delta rispetto
+         alla configurazione a 50\,m (in rosso i cali di SR; in grigio l'aumento --- atteso
+         --- degli step).}
+\label{tab:rl_r10}
+\end{table}
+
+Con un bersaglio cinque volte pi\`u piccolo l'agente continua a raggiungerlo quasi sempre
+($99{,}2\%$), ma \textbf{impiega circa il doppio degli step} ($27{,}8 \to 54{,}8$, ovvero
+$4{,}6 \to 9{,}1$ minuti). Il dato interessante \`e \emph{dove} va a finire questo tempo
+extra: \textbf{non} in un rallentamento. La velocit\`a media resta infatti prossima al
+massimo ($4{,}98\,\text{m/s}$), praticamente identica alla configurazione a $50\,\text{m}$.
+
+Il motivo \`e nel criterio di cattura: il successo \`e valutato sul \textbf{segmento
+percorso} (posizione precedente $\to$ corrente), non solo sull'endpoint. Un passo pieno da
+$50\,\text{m}$ la cui traiettoria passa entro $10\,\text{m}$ dalla sorgente conta gi\`a
+come successo; l'agente quindi \textbf{non \`e obbligato a frenare} --- gli basta
+indirizzare una falcata che sfiori il bersaglio. Centrare un target da $10\,\text{m}$ con
+passi da $50\,\text{m}$ richiede per\`o pi\`u manovre: l'agente \textbf{scavalca e
+ri-approccia} ripetutamente attorno alla sorgente, accumulando step a velocit\`a quasi
+piena. Il costo del bersaglio pi\`u piccolo si paga dunque in \textbf{lunghezza del
+percorso}, non in velocit\`a: la politica sa \emph{manovrare} finemente attorno a un target
+stretto, pi\`u di quanto sappia rallentare sistematicamente.
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}{0.78\linewidth}
+    \includegraphics[width=\linewidth]{velocity_vs_distance.png}
+    \caption{Velocit\`a media in funzione della distanza dalla sorgente (asse invertito:
+             lontano a sinistra, vicino a destra; linea rossa = raggio di successo).}
+  \end{subfigure}
+
+  \vspace{6pt}
+  \begin{subfigure}{0.78\linewidth}
+    \includegraphics[width=\linewidth]{ep04_chunk2_trajectory.png}
+    \caption{Traiettoria con manovra attorno alla sorgente: scavalcamenti e ri-approcci
+             (57 step).}
+  \end{subfigure}
+  \caption{Esperimento a raggio $10\,\text{m}$. La velocit\`a media resta prossima al
+           massimo a ogni distanza dalla sorgente (a): l'agente non frena. Scende invece
+           lungo il plume a piena velocit\`a e \textbf{manovra ripetutamente} attorno alla
+           sorgente (b) per far passare una falcata entro i $10\,\text{m}$.}
+  \label{fig:r10traj}
+\end{figure}
+
+\subsection{Heatmap di occupazione dell'agente}
+\label{sec:rl_heatmap}
+
+Per un riscontro \emph{visivo} dei risultati numerici si riportano alcune \textbf{heatmap
+di occupazione}: dato uno scenario (sorgente, vento, chunk) si eseguono 10 episodi e si
+accumula la densit\`a di presenza dell'agente sul dominio, su sfondo geografico (mare,
+costa, sorgente $\star$). Si confrontano tre agenti alla \textbf{stessa velocit\`a
+massima}: FCM ($5\,\text{m/s}$), PPO a singola corona ($v_{\max}{=}5$) e PPO a doppia
+corona ($v_{\max}{=}5$), su scenari \emph{difficili} (vento V1/V2, chunk Q1/2 o Q3/4). La
+scala colori \`e \textbf{comune ai tre pannelli}, fissata sui due modelli PPO; l'FCM, che
+oscilla a lungo negli stessi punti, ha densit\`a di picco molto pi\`u alte e quindi
+\textbf{satura}.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{heatmap_1_SRC114_V2_Q2.png}
+  \caption{Heatmap di occupazione --- SRC114, V2, Q3/4. FCM (sinistra) vs.\ PPO singola
+           corona (centro) vs.\ PPO doppia corona (destra), $v_{\max}{=}5$, scala comune.}
+  \label{fig:heatmap1}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{heatmap_2_SRC120_V2_Q1.png}
+  \caption{Heatmap di occupazione --- SRC120, V2, Q1/2. Stessa disposizione e stessa scala
+           della figura precedente.}
+  \label{fig:heatmap2}
+\end{figure}
+
+Se ne leggono due fatti. Nel confronto \textbf{FCM vs.\ PPO}, l'FCM resta
+\textbf{intrappolato} in macchie oscillanti lontane dalla sorgente e quasi sempre
+fallisce, mentre il PPO forma una scia che \textbf{converge sulla sorgente}: \`e la
+controparte visiva del divario di success rate (Sezione~\ref{sec:rl_confronto}) --- la
+risalita di gradiente \emph{locale}, senza memoria n\'e contesto, si perde nel plume
+avvettato. Nel confronto \textbf{singola vs.\ doppia corona}, entrambe raggiungono la
+sorgente, ma la doppia concentra la presenza in un \textbf{corridoio pi\`u stretto e
+definito} (pi\`u luminoso a parit\`a di scala) mentre la singola \`e pi\`u dispersa: \`e
+la controparte visiva del $-34\%$ di step della Tabella~\ref{tab:dual_vmax}. Va letta con
+un'avvertenza: la luminosit\`a indica la \emph{densit\`a di passaggio}, non la velocit\`a
+--- un tratto pi\`u luminoso vicino alla sorgente riflette la convergenza di tutte le run
+in un corridoio comune, non un rallentamento (la velocit\`a resta $\sim v_{\max}$).
+
+\subsection{Analisi delle spawn map}
+\label{sec:spawn_map}
+
+Per indagare se l'esito di un episodio dipenda dalla posizione iniziale del master, sono
+state generate le \textbf{spawn map} per le configurazioni vento--chunk con success rate
+inferiore al 100\%. Per ciascuna si selezionano le 5 sorgenti con il maggior numero di
+fallimenti; per ogni terna (sorgente, $v$, $q$) si eseguono 10 episodi e si registrano le
+coordinate di spawn, contrassegnate con un \textcolor{green!60!black}{cerchio verde}
+(successo) o una \textcolor{red!70!black}{croce rossa} (fallimento), sovrapposte al plume
+di concentrazione della specifica sorgente all'istante $Q^*$.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{spawn_SRC114.png}
+  \caption{Spawn map --- SRC114. Cerchi verdi (successo) e croci rosse (fallimento)
+           risultano spazialmente intrecciati: non emerge alcuna regione di partenza
+           sistematicamente sfavorevole.}
+  \label{fig:spawn1}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{spawn_SRC119.png}
+  \caption{Spawn map --- SRC119. Anche qui successi e fallimenti si alternano nelle stesse
+           zone del plume: l'esito non \`e separabile in base alla posizione di spawn.}
+  \label{fig:spawn2}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{spawn_SRC132.png}
+  \caption{Spawn map --- SRC132. La sovrapposizione di esiti opposti dagli stessi punti di
+           partenza conferma che il fallimento dipende dalle condizioni idrodinamiche del
+           chunk, non dalla geometria dello spawn.}
+  \label{fig:spawn3}
+\end{figure}
+
+In tutte le sorgenti analizzate, i punti di partenza che portano al successo e quelli che
+portano al fallimento \textbf{non mostrano alcuna separazione spaziale}: non emergono zone
+di spawn sistematicamente ``difficili'' o ``facili''. L'esito di un episodio non dipende
+dunque dalla posizione iniziale del master, bens\`i dalle condizioni idrodinamiche locali
+(intensit\`a e direzione del plume, turbolenza) proprie di quel chunk temporale e di quello
+scenario di vento. I fallimenti residui del modello sono da attribuire a caratteristiche
+intrinseche degli scenari pi\`u difficili, non a limitazioni geometriche dello spazio di
+spawn.
+
+\subsection{Confronto con FCM puro e adattivo}
+\label{sec:rl_confronto}
+
+La Tabella~\ref{tab:confronto} riassume il confronto tra le due varianti del metodo del
+gradiente (Capitolo~\ref{cap:fcm}) e il modello RL di riferimento (\texttt{minimal}),
+valutati sulle stesse sorgenti di test.
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\small
+\begin{tabular}{L{3.2cm} C{2.8cm} C{2.8cm} C{2.8cm}}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{Metrica}} &
+\textcolor{white}{\textbf{FCM puro}} &
+\textcolor{white}{\textbf{FCM adattivo}} &
+\textcolor{white}{\textbf{RL (minimal)}} \\
+\midrule
+\rowcolor{rowalt}
+SR globale & 32{,}9\% & 63{,}5\% & \textbf{96{,}9\%} \\
+V0 & 39{,}7\% & 84{,}6\% & \textbf{100{,}0\%} \\
+\rowcolor{rowalt}
+V1 & 16{,}0\% & 35{,}3\% & \textbf{99{,}0\%} \\
+V2 & 23{,}7\% & 41{,}7\% & \textbf{88{,}7\%} \\
+\rowcolor{rowalt}
+V3 & 51{,}9\% & 92{,}3\% & \textbf{99{,}7\%} \\
+Q1/4 & 50{,}5\% & 90{,}9\% & \textbf{100{,}0\%} \\
+\rowcolor{rowalt}
+Q1/2 & 11{,}5\% & 44{,}2\% & \textbf{93{,}5\%} \\
+Q3/4 & 36{,}5\% & 55{,}3\% & \textbf{97{,}1\%} \\
+\bottomrule
+\end{tabular}
+\caption{Confronto diretto tra FCM puro ($r_s{=}50\,\text{m}$), FCM con passo adattivo
+         nella configurazione migliore ($lr{=}40\,\text{m}$,
+         Tabella~\ref{tab:fcm_sweep}) e modello RL di riferimento \texttt{minimal}. Il FCM
+         adattivo adotta il disco adattivo di spawn, mentre il FCM puro e l'RL
+         \texttt{minimal} usano la cascata (Sezione~\ref{sec:spawn}); il confronto RL vs.\ FCM
+         a parit\`a di spawn e velocit\`a \`e nella Sezione~\ref{sec:rl_fullrange}.}
+\label{tab:confronto}
+\end{table}
+
+Il modello RL supera nettamente entrambe le varianti del metodo del gradiente su ogni
+scenario: $+64$ punti percentuali sul success rate globale rispetto al FCM puro e $+33$
+rispetto al FCM adattivo. Il divario \`e massimo proprio negli scenari a plume diffuso
+(V1, V2, Q1/2), dove il gradiente locale degenera e i metodi reattivi perdono la
+direzione.
+
+Il confronto della Tabella~\ref{tab:confronto} \`e per giunta \emph{sfavorevole} all'RL
+sul piano cinematico: il modello \texttt{minimal} si muove a passo fisso di
+$10\,\text{m}$ per timestep ($1\,\text{m/s}$), mentre l'FCM adattivo a $lr = 40\,\text{m}$
+compie passi fino a quattro volte pi\`u lunghi ($4\,\text{m/s}$). L'RL vince dunque pur
+essendo quattro volte pi\`u lento. Poich\'e entrambi i metodi dispongono ora di una
+versione a velocit\`a variabile --- la catena della Sezione~\ref{sec:rl_velocity} per il
+PPO, lo sweep su $lr$ per l'FCM --- \`e possibile un confronto \textbf{a parit\`a di
+velocit\`a massima}, che neutralizza questo fattore: un passo FCM di $lr$ metri per
+timestep corrisponde a $lr/10$ m/s, e si accoppia quindi con lo stadio PPO di pari
+$v_{\max}$ (Tabella~\ref{tab:fcm_ppo_vel}).
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.35}
+\setlength{\tabcolsep}{4pt}
+\small
+\begin{tabular}{l c c c c c c c c}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{Vel.\ / metodo}} &
+\textcolor{white}{\textbf{SR\%}} &
+\textcolor{white}{\textbf{V0}} &
+\textcolor{white}{\textbf{V1}} &
+\textcolor{white}{\textbf{V2}} &
+\textcolor{white}{\textbf{V3}} &
+\textcolor{white}{\textbf{Q1/4}} &
+\textcolor{white}{\textbf{Q1/2}} &
+\textcolor{white}{\textbf{Q3/4}} \\
+\midrule
+FCM ($lr{=}10$) & 54{,}6 & 73{,}7 & 29{,}5 & 35{,}9 & 79{,}5 & 77{,}9 & 30{,}3 & 55{,}8 \\
+\rowcolor{rowalt}
+PPO ($v_{\max}{=}1$) & \shortstack{97{,}1\\[-1pt]{\scriptsize\textcolor{green!50!black}{+42{,}5}}} & \shortstack{99{,}5\\[-1pt]{\scriptsize\textcolor{green!50!black}{+25{,}8}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+70{,}5}}} & \shortstack{89{,}7\\[-1pt]{\scriptsize\textcolor{green!50!black}{+53{,}8}}} & \shortstack{99{,}2\\[-1pt]{\scriptsize\textcolor{green!50!black}{+19{,}7}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+22{,}1}}} & \shortstack{95{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+64{,}7}}} & \shortstack{96{,}3\\[-1pt]{\scriptsize\textcolor{green!50!black}{+40{,}6}}} \\
+\midrule
+FCM ($lr{=}20$) & 58{,}2 & 80{,}1 & 32{,}1 & 34{,}6 & 85{,}9 & 81{,}7 & 38{,}0 & 54{,}8 \\
+\rowcolor{rowalt}
+PPO ($v_{\max}{=}2$) & \shortstack{99{,}7\\[-1pt]{\scriptsize\textcolor{green!50!black}{+41{,}5}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+19{,}9}}} & \shortstack{99{,}5\\[-1pt]{\scriptsize\textcolor{green!50!black}{+67{,}4}}} & \shortstack{99{,}2\\[-1pt]{\scriptsize\textcolor{green!50!black}{+64{,}6}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+14{,}1}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+18{,}3}}} & \shortstack{99{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+61{,}1}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+45{,}2}}} \\
+\midrule
+FCM ($lr{=}30$) & 60{,}7 & 84{,}6 & 30{,}8 & 37{,}2 & 90{,}4 & 86{,}1 & 39{,}4 & 56{,}7 \\
+\rowcolor{rowalt}
+PPO ($v_{\max}{=}3$) & \shortstack{99{,}9\\[-1pt]{\scriptsize\textcolor{green!50!black}{+39{,}2}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+15{,}4}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+69{,}2}}} & \shortstack{99{,}7\\[-1pt]{\scriptsize\textcolor{green!50!black}{+62{,}6}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+9{,}6}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+13{,}9}}} & \shortstack{99{,}8\\[-1pt]{\scriptsize\textcolor{green!50!black}{+60{,}4}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+43{,}3}}} \\
+\midrule
+FCM ($lr{=}40$) & 63{,}5 & 84{,}6 & 35{,}3 & 41{,}7 & 92{,}3 & 90{,}9 & 44{,}2 & 55{,}3 \\
+\rowcolor{rowalt}
+PPO ($v_{\max}{=}4$) & \shortstack{99{,}9\\[-1pt]{\scriptsize\textcolor{green!50!black}{+36{,}4}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+15{,}4}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+64{,}7}}} & \shortstack{99{,}5\\[-1pt]{\scriptsize\textcolor{green!50!black}{+57{,}8}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+7{,}7}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+9{,}1}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+55{,}8}}} & \shortstack{99{,}6\\[-1pt]{\scriptsize\textcolor{green!50!black}{+44{,}3}}} \\
+\midrule
+FCM ($lr{=}50$) & 62{,}2 & 84{,}6 & 34{,}6 & 37{,}2 & 92{,}3 & 89{,}4 & 41{,}8 & 55{,}3 \\
+\rowcolor{rowalt}
+PPO ($v_{\max}{=}5$) & \shortstack{99{,}9\\[-1pt]{\scriptsize\textcolor{green!50!black}{+37{,}8}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+15{,}4}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+65{,}4}}} & \shortstack{99{,}7\\[-1pt]{\scriptsize\textcolor{green!50!black}{+62{,}6}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+7{,}7}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+10{,}6}}} & \shortstack{100{,}0\\[-1pt]{\scriptsize\textcolor{green!50!black}{+58{,}2}}} & \shortstack{99{,}8\\[-1pt]{\scriptsize\textcolor{green!50!black}{+44{,}5}}} \\
+\bottomrule
+\end{tabular}
+\caption{FCM adattivo vs.\ PPO adattivo \textbf{a parit\`a di velocit\`a massima} (FCM:
+         $lr/\Delta t$; PPO: $v_{\max}$), per scenario di vento (V) e chunk temporale (Q).
+         Sotto ogni valore PPO, in verde, il surplus sul FCM in punti percentuali.}
+\label{tab:fcm_ppo_vel}
+\end{table}
+
+Neutralizzato il fattore cinematico, il quadro non cambia: a \textbf{ogni} livello di
+velocit\`a il PPO supera l'FCM di $36$--$42$ punti di success rate globale, e il divario
+resta massimo negli scenari avversi (V1, V2, Q1/2), dove tocca i $55$--$70$ punti. Il
+vantaggio dell'RL non \`e dunque un artefatto della velocit\`a: \`e strutturale. L'RL ha
+appreso strategie non riducibili al gradiente locale --- sfruttamento della memoria
+storica, navigazione in zone a bassa concentrazione, recupero da situazioni di stallo ---
+che emergono dall'ottimizzazione su milioni di episodi e non sono accessibili a un metodo
+che decide passo-passo senza contesto.
+
+\subsection{Estensione all'intero range di velocit\`a}
+\label{sec:rl_fullrange}
+
+Le analisi precedenti coprono i valori interi $v_{\max} \in \{1,\ldots,5\}\,\text{m/s}$.
+Per completare il quadro sull'\emph{intero} intervallo operativo del veicolo, la catena
+\`e stata estesa sia verso il basso, con le \textbf{velocit\`a ridotte}
+$v_{\max} \in \{0{,}1,\,0{,}4,\,0{,}7\}$, sia negli \textbf{stadi intermedi}
+$v_{\max} \in \{1{,}2,\,1{,}5,\,1{,}7,\,1{,}9\}$, per entrambe le formazioni (singola e
+doppia corona). Ogni stadio \`e ottenuto per fine-tuning a catena dal modello adiacente
+gi\`a addestrato --- ascendente per gli intermedi, discendente per i valori bassi --- e
+valutato sui consueti 1560 episodi held-out. In parallelo, il metodo del gradiente
+adattivo \`e stato valutato al learning rate corrispondente ($lr = 10\,v_{\max}$, cfr.\
+Sezione~\ref{sec:fcm_adam}) su tutte le stesse velocit\`a, cos\`i da estendere il confronto
+\emph{a parit\`a di velocit\`a massima} lungo l'intero range. Le
+Figure~\ref{fig:fullrange_sr}--\ref{fig:fullrange_steps} riportano l'andamento di success
+rate e step medi al successo; la Tabella~\ref{tab:fullrange} ne raccoglie i valori.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\linewidth]{sr_vs_vmax_single_double.png}
+  \caption{Success rate globale in funzione di $v_{\max}$ sull'intero range
+           ($0{,}1$--$5\,\text{m/s}$): PPO singola corona, PPO doppia corona e FCM adattivo
+           (held-out; 1560 episodi per modello, 624 per l'FCM). Le due curve PPO saturano
+           gi\`a a $v_{\max} \gtrsim 1{,}2$, mentre l'FCM resta confinato attorno al
+           $55$--$63\%$ alle velocit\`a operative, con un ulteriore calo (fino al
+           $\sim$$29\%$) a quelle pi\`u basse.}
+  \label{fig:fullrange_sr}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\linewidth]{steps_vs_vmax_single_double.png}
+  \caption{Step medi al successo in funzione di $v_{\max}$ (asse secondario in minuti,
+           $1\,\text{step}=10\,\text{s}$). Dalla velocit\`a nominale ($1\,\text{m/s}$) in su
+           la doppia corona raggiunge la sorgente in meno passi della singola; alle
+           velocit\`a pi\`u basse i due profili sono sostanzialmente sovrapposti. Il tempo al
+           successo cala in modo netto all'aumentare di $v_{\max}$.}
+  \label{fig:fullrange_steps}
+\end{figure}
+
+La Tabella~\ref{tab:fullrange_singledouble} dettaglia il confronto \emph{singola vs.\ doppia
+corona} a ciascuna velocit\`a, riportando per entrambe success rate e passi al successo con
+le rispettive differenze.
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{0.95}
+\setlength{\tabcolsep}{4pt}
+\footnotesize
+\begin{tabular}{c c c c c c c}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{$v_{\max}$}} &
+\textcolor{white}{\textbf{SR singola}} &
+\textcolor{white}{\textbf{SR doppia}} &
+\textcolor{white}{\textbf{$\Delta$SR}} &
+\textcolor{white}{\textbf{step singola}} &
+\textcolor{white}{\textbf{step doppia}} &
+\textcolor{white}{\textbf{$\Delta$step}} \\
+\midrule
+0{,}1 & 59{,}0 & 49{,}0 & \textcolor{red!70!black}{$-$10{,}0} & 478{,}9 & 423{,}2 & \textcolor{green!50!black}{$-$11{,}6\%} \\
+\rowcolor{rowalt}
+0{,}4 & 91{,}7 & 88{,}5 & \textcolor{red!70!black}{$-$3{,}2} & 183{,}4 & 187{,}7 & \textcolor{red!70!black}{$+$2{,}3\%} \\
+0{,}7 & 96{,}0 & 93{,}9 & \textcolor{red!70!black}{$-$2{,}1} & 136{,}6 & 131{,}3 & \textcolor{green!50!black}{$-$3{,}9\%} \\
+\rowcolor{rowalt}
+1{,}0 & 96{,}8 & 95{,}8 & \textcolor{red!70!black}{$-$1{,}0} & 114{,}6 & 97{,}8 & \textcolor{green!50!black}{$-$14{,}7\%} \\
+1{,}2 & 98{,}4 & 98{,}7 & \textcolor{green!50!black}{$+$0{,}3} & 95{,}5 & 76{,}5 & \textcolor{green!50!black}{$-$19{,}9\%} \\
+\rowcolor{rowalt}
+1{,}5 & 98{,}5 & 97{,}3 & \textcolor{red!70!black}{$-$1{,}2} & 86{,}3 & 64{,}7 & \textcolor{green!50!black}{$-$25{,}0\%} \\
+1{,}7 & 99{,}9 & 99{,}6 & \textcolor{red!70!black}{$-$0{,}3} & 68{,}7 & 60{,}7 & \textcolor{green!50!black}{$-$11{,}6\%} \\
+\rowcolor{rowalt}
+1{,}9 & 99{,}0 & 99{,}9 & \textcolor{green!50!black}{$+$0{,}9} & 57{,}8 & 47{,}7 & \textcolor{green!50!black}{$-$17{,}5\%} \\
+2{,}0 & 99{,}6 & 99{,}7 & \textcolor{green!50!black}{$+$0{,}1} & 71{,}9 & 49{,}8 & \textcolor{green!50!black}{$-$30{,}7\%} \\
+\rowcolor{rowalt}
+3{,}0 & 99{,}9 & 100{,}0 & \textcolor{green!50!black}{$+$0{,}1} & 46{,}8 & 31{,}3 & \textcolor{green!50!black}{$-$33{,}1\%} \\
+4{,}0 & 99{,}9 & 99{,}9 & 0{,}0 & 39{,}7 & 25{,}3 & \textcolor{green!50!black}{$-$36{,}3\%} \\
+\rowcolor{rowalt}
+5{,}0 & 99{,}9 & 100{,}0 & \textcolor{green!50!black}{$+$0{,}1} & 27{,}4 & 20{,}9 & \textcolor{green!50!black}{$-$23{,}7\%} \\
+\bottomrule
+\end{tabular}
+\caption{Singola vs.\ doppia corona di sensori a ciascun $v_{\max}$ (held-out, 1560 episodi per
+         modello). ``step'' $=$ passi medi al successo ($1\,\text{step}=10\,\text{s}$);
+         $\Delta$SR $=$ doppia $-$ singola (punti percentuali); $\Delta$step $=$ variazione
+         relativa dei passi (\textcolor{green!50!black}{verde} $=$ doppia pi\`u
+         veloce/migliore, \textcolor{red!70!black}{rosso} $=$ doppia peggiore). I valori
+         provengono dalla campagna di valutazione unificata sull'intero range e possono
+         differire di poco da quelli della Tabella~\ref{tab:dual_vmax}.}
+\label{tab:fullrange_singledouble}
+\end{table}
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\setlength{\tabcolsep}{5pt}
+\small
+\begin{tabular}{C{1.6cm} C{2.2cm} C{2.2cm} C{2.0cm} C{2.4cm}}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{$v_{\max}$}} &
+\textcolor{white}{\textbf{SR singola}} &
+\textcolor{white}{\textbf{SR doppia}} &
+\textcolor{white}{\textbf{SR FCM}} &
+\textcolor{white}{\textbf{PPO $-$ FCM}} \\
+\midrule
+0{,}1 & 59{,}0 & 49{,}0 & 29{,}3 & \textcolor{green!50!black}{\textbf{+29{,}7}} \\
+\rowcolor{rowalt}
+0{,}4 & 91{,}7 & 88{,}5 & 48{,}1 & \textcolor{green!50!black}{\textbf{+43{,}6}} \\
+0{,}7 & 96{,}0 & 93{,}9 & 54{,}0 & \textcolor{green!50!black}{\textbf{+42{,}0}} \\
+\rowcolor{rowalt}
+1{,}0 & 96{,}8 & 95{,}8 & 54{,}6 & \textcolor{green!50!black}{\textbf{+42{,}2}} \\
+1{,}2 & 98{,}4 & 98{,}7 & 56{,}4 & \textcolor{green!50!black}{\textbf{+42{,}3}} \\
+\rowcolor{rowalt}
+1{,}5 & 98{,}5 & 97{,}3 & 57{,}1 & \textcolor{green!50!black}{\textbf{+41{,}4}} \\
+1{,}7 & 99{,}9 & 99{,}6 & 57{,}2 & \textcolor{green!50!black}{\textbf{+42{,}7}} \\
+\rowcolor{rowalt}
+1{,}9 & 99{,}0 & 99{,}9 & 58{,}0 & \textcolor{green!50!black}{\textbf{+41{,}9}} \\
+2{,}0 & 99{,}6 & 99{,}7 & 58{,}2 & \textcolor{green!50!black}{\textbf{+41{,}5}} \\
+\rowcolor{rowalt}
+3{,}0 & 99{,}9 & 100{,}0 & 60{,}7 & \textcolor{green!50!black}{\textbf{+39{,}3}} \\
+4{,}0 & 99{,}9 & 99{,}9 & 63{,}5 & \textcolor{green!50!black}{\textbf{+36{,}4}} \\
+\rowcolor{rowalt}
+5{,}0 & 99{,}9 & 100{,}0 & 62{,}2 & \textcolor{green!50!black}{\textbf{+37{,}8}} \\
+\bottomrule
+\end{tabular}
+\caption{Success rate globale sull'intero range di velocit\`a: PPO singola corona, PPO
+         doppia corona e FCM adattivo (held-out). L'ultima colonna riporta il surplus della
+         migliore configurazione PPO sull'FCM di pari velocit\`a. I valori ai punti interi
+         possono differire di meno di un punto da quelli delle Tabelle~\ref{tab:rl_velocity}
+         e~\ref{tab:dual_vmax}, in quanto ottenuti da una campagna di valutazione unificata
+         sull'intero range.}
+\label{tab:fullrange}
+\end{table}
+
+Quattro fatti emergono con nettezza. Primo, la \textbf{saturazione precoce} del PPO: gi\`a a
+$v_{\max} = 1{,}2\,\text{m/s}$ entrambe le formazioni superano il $98\%$ e si stabilizzano
+attorno al $99\%$ fino a $5\,\text{m/s}$; il margine di velocit\`a aggiuntivo si
+traduce in tempi al successo pi\`u brevi (Figura~\ref{fig:fullrange_steps}), non in
+maggiore affidabilit\`a. Secondo, il \textbf{plateau dell'FCM}: il metodo del gradiente
+non supera il $64\%$, e la sua curva cresce lentamente e in modo quasi lineare con la
+velocit\`a, senza mai avvicinarsi al PPO --- conferma che il limite dell'FCM \`e
+\emph{strutturale} (la natura reattiva e locale), non cinematico. Terzo, il
+\textbf{crollo condiviso alle velocit\`a molto basse}: a $v_{\max} = 0{,}1\,\text{m/s}$
+anche il PPO scende al $59\%$, perch\'e a $0{,}1\,\text{m/s}$ il veicolo \`e pi\`u lento
+delle correnti che deve risalire e nessuna strategia di navigazione pu\`o compensare un
+deficit puramente fisico di propulsione; \`e l'unico regime in cui il divario
+PPO\,--\,FCM si riduce (a $+29{,}7$), pur restando ampiamente a favore del PPO. Su tutto il
+resto del range il surplus del PPO si mantiene fra $+36$ e $+44$ punti percentuali,
+ribadendo che il vantaggio dell'apprendimento \`e sistematico e indipendente dalla
+velocit\`a operativa scelta. Quarto, il confronto \textbf{singola vs.\ doppia corona}
+(Tabella~\ref{tab:fullrange_singledouble}): la seconda corona a $50\,\text{m}$ non \`e sempre
+conveniente, ma il suo valore dipende dalla velocit\`a, con uno spartiacque attorno a
+$v_{\max}\approx 1\,\text{m/s}$. \emph{Sotto} tale soglia la doppia corona \textbf{costa}
+success rate (fino a $-10$ punti a $0{,}1\,\text{m/s}$): con passi piccoli l'agente resta a
+lungo immerso nel campo e, negli scenari avversi, il segnale lontano pu\`o puntare lungo la
+corrente anzich\'e verso la sorgente, senza lasciare margine per correggere. \emph{Da}
+$v_{\max}\geq 1{,}2\,\text{m/s}$, invece, la doppia corona \textbf{mantiene la stessa
+affidabilit\`a} (differenze di SR tra $-1{,}2$ e $+0{,}9$ punti, rumore vicino alla
+saturazione) \textbf{riducendo per\`o i passi al successo del $12$--$37\%$}: a falcate lunghe
+la ``vista lontana'' aiuta a mirare meglio la direzione ed evitare gli overshoot. Il secondo
+anello \`e dunque un vantaggio netto solo dalle velocit\`a intermedie in su.

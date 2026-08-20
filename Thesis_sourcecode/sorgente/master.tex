@@ -1,0 +1,147 @@
+% ============================================================================
+%  TESI DI LAUREA MAGISTRALE --- Progetto HYDRAS
+%  Source seeking marino con metodo del gradiente e Reinforcement Learning
+% ============================================================================
+\documentclass[12pt,a4paper,twoside,openany]{book}
+
+% ─── Lingua e codifica ──────────────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[italian]{babel}
+\usepackage{lmodern}
+
+% ─── Layout ─────────────────────────────────────────────────────────────────
+\usepackage[top=2.8cm, bottom=2.8cm, inner=2.6cm, outer=2.6cm, headheight=15pt]{geometry}
+\usepackage{setspace}
+\setstretch{1.5}   % interlinea 1.5 come nella tesi triennale (Tptesi2)
+
+% ─── Matematica ─────────────────────────────────────────────────────────────
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{mathtools}
+
+% ─── Grafica e colori ───────────────────────────────────────────────────────
+\usepackage{graphicx}
+\graphicspath{{../figure/}}
+\usepackage[table]{xcolor}
+\definecolor{headerbg}{RGB}{30, 80, 140}
+\definecolor{rowalt}{RGB}{235, 242, 252}
+\definecolor{best}{RGB}{198, 239, 206}
+\definecolor{worst}{RGB}{255, 230, 230}
+\usepackage{subcaption}
+\usepackage[font=small,labelfont=bf]{caption}
+
+% ─── Diagrammi ──────────────────────────────────────────────────────────────
+\usepackage{tikz}
+\usetikzlibrary{positioning, arrows.meta, fit, backgrounds, shapes.geometric}
+
+% ─── Tabelle ────────────────────────────────────────────────────────────────
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{float}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+% ─── Codice ─────────────────────────────────────────────────────────────────
+\usepackage{listings}
+\definecolor{codekw}{RGB}{0,0,160}
+\definecolor{codecm}{RGB}{100,100,100}
+\definecolor{codebg}{RGB}{245,245,245}
+\lstdefinestyle{py}{
+  language=Python,
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecm}\itshape,
+  backgroundcolor=\color{codebg},
+  frame=single, rulecolor=\color{codecm!40},
+  numbers=none, breaklines=true, showstringspaces=false,
+  xleftmargin=6pt, xrightmargin=6pt, aboveskip=8pt, belowskip=6pt,
+}
+\lstset{style=py}
+
+% ─── Liste ──────────────────────────────────────────────────────────────────
+\usepackage{enumitem}
+
+% ─── Intestazioni ───────────────────────────────────────────────────────────
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\chaptermark}[1]{\markboth{\thechapter.\ #1}{}}
+\renewcommand{\sectionmark}[1]{\markright{\thesection\ #1}{}}
+\fancyhead[LE]{\itshape\thepage}
+\fancyhead[RE]{\itshape\leftmark}
+\fancyhead[RO]{\itshape\thepage}
+\fancyhead[LO]{\itshape\rightmark}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\setcounter{secnumdepth}{3}
+\setcounter{tocdepth}{2}
+
+% Evita che LaTeX stiri gli spazi verticali per allineare il fondo pagina:
+% mantiene spaziatura uniforme tra paragrafi/tabelle, spazio extra a fine pagina.
+\raggedbottom
+
+% Assorbe i piccoli sforamenti di riga residui (parole lunghe, sigle, math inline)
+% allargando gli spazi solo come ultima risorsa, evitando testo nel margine.
+\emergencystretch=2em
+
+% ─── Pagine bianche senza intestazione ──────────────────────────────────────
+\makeatletter
+\def\cleardoublepage{\clearpage\if@twoside
+  \ifodd\c@page\else
+    \hbox{}\thispagestyle{empty}\newpage\fi\fi}
+\makeatother
+
+% ─── Bibliografia ───────────────────────────────────────────────────────────
+\usepackage[numbers,sort&compress]{natbib}
+
+% ─── Link e segnalibri ──────────────────────────────────────────────────────
+\usepackage[colorlinks=true, linkcolor=black, citecolor=black, urlcolor=black,
+            bookmarksnumbered=true]{hyperref}
+\hypersetup{
+  pdftitle={Sviluppo di un sistema basato su reinforcement learning per la localizzazione di sorgenti inquinanti in ambiente marino},
+  pdfauthor={Mattia Manneschi}
+}
+
+% ════════════════════════════════════════════════════════════════════════════
+\begin{document}
+
+% ─── FRONTESPIZIO ───────────────────────────────────────────────────────────
+\frontmatter
+\input{frontespizio}
+
+% ─── Dedica ─────────────────────────────────────────────────────────────────
+\cleardoublepage
+\thispagestyle{empty}
+\vspace*{\fill}
+\begin{flushright}
+\textit{Alla mia famiglia}
+\end{flushright}
+\vspace*{\fill}
+
+% ─── Indice ─────────────────────────────────────────────────────────────────
+\cleardoublepage
+\tableofcontents
+
+% ─── Capitoli ───────────────────────────────────────────────────────────────
+\mainmatter
+\input{cap_introduzione}     % Cap. 1 --- Introduzione e struttura della tesi
+\input{cap_dati}            % Cap. 2 --- Il dataset
+\input{cap_ambiente}        % Cap. 3 --- Composizione dell'ambiente
+\input{cap_fcm}             % Cap. 4 --- Metodo del gradiente: FCM
+\input{cap_rl}              % Cap. 5 --- Apprendimento per rinforzo: PPO
+\input{cap_explainability}  % Cap. 6 --- Explainability della politica appresa
+\input{cap_conclusioni}     % Cap. 7 --- Conclusioni
+
+% ─── Bibliografia ───────────────────────────────────────────────────────────
+\backmatter
+\cleardoublepage
+\phantomsection
+\addcontentsline{toc}{chapter}{Bibliografia}
+\markboth{Bibliografia}{Bibliografia}
+\bibliographystyle{unsrtnat}
+\bibliography{biblio}
+
+\end{document}

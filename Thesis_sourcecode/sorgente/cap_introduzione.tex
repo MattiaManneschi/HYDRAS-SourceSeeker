@@ -1,0 +1,162 @@
+\chapter{Introduzione}
+\label{cap:intro}
+
+\section{Contesto e motivazione}
+
+L'inquinamento delle acque costiere rappresenta una delle principali minacce
+ambientali per gli ecosistemi marini e per le attivit\`a economiche legate al mare.
+Sversamenti di idrocarburi, scarichi industriali e rilasci accidentali di sostanze
+chimiche generano \emph{plume} di contaminante che si disperdono nell'ambiente
+seguendo la dinamica delle correnti e del vento. La localizzazione rapida della
+sorgente di un'emissione \`e cruciale per contenere il danno ambientale, garantire la
+sicurezza portuale e pianificare gli interventi di bonifica.
+
+Il problema di localizzare una sorgente emittente sconosciuta a partire da osservazioni
+locali e sparse del campo che essa genera \`e noto in letteratura come \emph{source
+seeking}~\citep{source_seeking}. L'impiego di sistemi robotici autonomi per questo
+compito \`e sempre pi\`u attraente grazie alla loro rapida dispiegabilit\`a e alla
+possibilit\`a di eliminare l'esposizione diretta degli operatori umani a sostanze
+pericolose. In ambito marino, il tracciamento di plume chimici \`e stato dimostrato
+tramite veicoli autonomi sottomarini (\emph{Autonomous Underwater Vehicles}, AUV) e di
+superficie (\emph{Autonomous Surface Vessels}, ASV)~\citep{plume_tracing}, anche in
+formazioni coordinate.
+
+La natura del contaminante influenza fortemente la strategia di ricerca. Gli
+\emph{sversamenti di idrocarburi} tendono a rimanere in superficie e sono rilevabili da
+remoto in mare aperto, ma non nelle aree portuali; gli \emph{scarichi fognari}, ricchi
+di nutrienti e patogeni, hanno galleggiabilit\`a neutra o negativa; i \emph{contaminanti
+chimici} sono spesso invisibili, a galleggiabilit\`a variabile e potenzialmente tossici.
+In tutti i casi, in ambiente costiero e portuale la dispersione \`e governata da una
+dinamica complessa --- correnti di marea, circolazione indotta dal vento, interazioni
+onda-corrente, apporti di acqua dolce, miscelamento turbolento e stratificazione ---
+descritta matematicamente da equazioni alle derivate parziali. Il telerilevamento
+satellitare, incluso il radar ad apertura sintetica (SAR), offre risoluzione spaziale e
+temporale limitata ed \`e spesso compromesso da occlusioni atmosferiche, risultando
+inadeguato nelle zone costiere confinate. Ci\`o rende indispensabili soluzioni robotiche
+\emph{in-situ} e adattive.
+
+\section{Approcci al source seeking}
+
+In letteratura il problema del source seeking \`e stato affrontato secondo diversi
+paradigmi di controllo. I metodi di \textbf{field climbing} (gradient ascent)
+\emph{model-free} assumono che l'intensit\`a del campo cresca avvicinandosi alla
+sorgente e guidano l'agente tramite la stima locale del gradiente: sono
+computazionalmente leggeri e non richiedono un modello dell'ambiente, ma soffrono di
+convergenza lenta, vulnerabilit\`a ai massimi locali e necessit\`a di formazioni dense
+per stimare accuratamente il gradiente. I metodi di \emph{extremum seeking control} (ESC)
+stimano il gradiente indirettamente tramite perturbazioni oscillatorie. Gli approcci
+\emph{model-based} di \emph{source term estimation} (STE) formulano la localizzazione
+come un problema inverso, stimando i parametri della sorgente da misure rumorose tramite
+filtri di Kalman o particellari, ma richiedono modelli ambientali accurati e risorse di
+calcolo a bordo significative. Esistono inoltre approcci \emph{information-theoretic},
+ispirati a comportamenti biologici, e basati su \emph{apprendimento}.
+
+Dati i limiti dei metodi gradient-based e model-based, cresce l'interesse verso il
+\textbf{Reinforcement Learning} (RL) come alternativa flessibile e \emph{model-free},
+capace di apprendere strategie di navigazione robuste direttamente dall'interazione con
+ambienti complessi. \`E in questa direzione che si colloca il presente lavoro.
+
+\section{Reinforcement Learning e scelta dell'algoritmo}
+\label{sec:intro_rl}
+
+Il Reinforcement Learning formalizza il problema come un processo decisionale di Markov, in
+cui un agente sceglie azioni per massimizzare un ritorno cumulativo atteso, apprendendo per
+tentativi dall'interazione con l'ambiente~\citep{sutton_barto}. Gli algoritmi si raggruppano
+in poche famiglie. I metodi \textbf{value-based} --- \emph{Q-learning} e la sua versione con
+reti profonde, DQN~\citep{dqn} --- apprendono una funzione azione-valore $Q(s,a)$ e ne
+derivano la politica per massimizzazione \emph{greedy}: sono \emph{off-policy} ed efficienti
+nel riuso dei dati (\emph{replay buffer}), ma nativamente limitati ad azioni discrete e
+talvolta instabili. I metodi \textbf{policy-gradient} (REINFORCE, A2C/A3C) ottimizzano
+\emph{direttamente} i parametri della politica lungo il gradiente del ritorno atteso,
+gestendo naturalmente politiche stocastiche. Gli approcci \textbf{actor--critic} combinano i
+due --- una rete \emph{attore} produce la politica, una rete \emph{critico} ne stima il
+valore per ridurre la varianza del gradiente --- e includono metodi off-policy per il
+controllo continuo come DDPG, TD3 e SAC~\citep{sac}. Una linea distinta \`e infine quella dei
+metodi a \textbf{regione di fiducia}, che vincolano l'ampiezza di ogni aggiornamento della
+politica per garantirne la stabilit\`a: TRPO~\citep{trpo} vi riesce risolvendo un problema di
+ottimizzazione vincolata, mentre \textbf{PPO}~\citep{ppo} ne \`e la semplificazione pratica,
+che ottiene lo stesso effetto con un semplice \emph{clipping} del rapporto di probabilit\`a.
+
+In questa tesi si \`e scelto \textbf{Proximal Policy Optimization} (PPO) per un insieme di
+ragioni aderenti alla natura del problema. Anzitutto l'ambiente \`e un \emph{simulatore}: i
+campioni sono abbondanti e a basso costo, condizione in cui la natura \emph{on-policy} di PPO
+--- di norma uno svantaggio di efficienza campionaria --- non penalizza, mentre se ne
+guadagna la stabilit\`a. In secondo luogo lo spazio d'azione \`e \emph{discreto} (le otto
+direzioni, poi estese a $8\times5$ livelli di velocit\`a; Capitolo~\ref{cap:rl}): ci\`o
+esclude i metodi pensati per il controllo continuo (DDPG, TD3, SAC) e si sposa naturalmente
+con una politica categorica. Il vincolo di non uscire dal dominio o incagliarsi sulla costa
+\`e imposto tramite \emph{action masking}, per cui esiste un'estensione diretta e consolidata
+di PPO --- MaskablePPO~\citep{maskable_ppo}. Rispetto a TRPO, PPO ottiene una stabilit\`a
+analoga con un'implementazione molto pi\`u semplice e pochi iperparametri; rispetto a DQN
+evita le note instabilit\`a dell'off-policy con \emph{replay buffer} in un ambiente per
+giunta \emph{non stazionario} (il campo di concentrazione evolve durante l'episodio). PPO \`e
+inoltre lo standard de facto per il controllo tramite RL, con implementazioni affidabili e
+riproducibili~\citep{sb3}, e la sua estensione multi-agente (MAPPO~\citep{mappo}) offre un
+percorso naturale verso la squadra cooperativa delineata fra gli sviluppi futuri. La
+descrizione dettagliata dell'algoritmo --- l'obiettivo \emph{clipped}, la stima del vantaggio
+e la nostra implementazione --- \`e rimandata al Capitolo~\ref{cap:rl}.
+
+\section{Il progetto HYDRAS}
+
+Questa tesi si inserisce nel progetto \textbf{HYDRAS} (\emph{HYdrodynamic-aware
+Distributed Robots for mArine Source-seeking}), che ha come obiettivo lo sviluppo di un
+\emph{framework} di nuova generazione per il source seeking autonomo in ambienti costieri
+e portuali complessi. L'elemento distintivo di HYDRAS \`e l'integrazione di
+\textbf{modelli idrodinamici ad alta risoluzione} site-specific, che simulano il
+trasporto dell'inquinante in condizioni di forcing realistiche, con strategie di
+controllo robotico distribuito. Tali simulazioni svolgono un duplice ruolo: generare
+ambienti fisicamente realistici per la valutazione delle strategie di ricerca e fornire
+terreni di addestramento per algoritmi di controllo basati su apprendimento.
+
+Il dominio di studio \`e la baia di Cecina (costa toscana), modellata tramite
+simulazioni idrodinamiche \textbf{MIKE21} accoppiate ai dati meteo-oceanografici dei
+servizi \textbf{CMEMS} (\emph{Copernicus Marine Environment Monitoring Service}) ed
+\textbf{ERA5}, descritte in dettaglio nel Capitolo~\ref{cap:dati}.
+
+Nella sua visione complessiva, HYDRAS adotta un'architettura \emph{multi-agente}: una
+rete di robot mobili coordinati, ciascuno dotato di sensori di concentrazione, che
+collaborano per localizzare la sorgente con maggiore rapidit\`a, copertura spaziale e
+robustezza rispetto a un sistema a singolo agente. In questa tesi si realizza una
+specifica istanza di tale architettura, basata su una \textbf{squadra di agenti} in
+formazione \emph{master--slave}: un agente \emph{master} si occupa della navigazione e
+della decisione di movimento, mentre otto agenti \emph{slave} mantengono una formazione
+rigida attorno ad esso e hanno l'unico compito di campionare la concentrazione del
+contaminante nelle rispettive posizioni e riportarla al master. Le otto misurazioni
+degli slave, disposte lungo le direzioni cardinali e diagonali, costituiscono la base
+informativa con cui il master stima la direzione verso la sorgente.
+
+\section{Obiettivo e struttura della tesi}
+
+L'obiettivo della tesi \`e progettare, addestrare e valutare la politica di navigazione
+del master, confrontando due famiglie di approcci sul medesimo ambiente di simulazione:
+un \textbf{metodo del gradiente} (Field Climbing Method), che stima localmente il
+gradiente del campo di concentrazione a partire dalle misurazioni degli slave e si muove
+nella direzione di salita pi\`u ripida senza alcuna fase di addestramento, adottato come
+\emph{baseline} algoritmica; e un approccio di \textbf{Reinforcement Learning} basato
+sull'algoritmo \emph{Proximal Policy Optimization} (PPO), in cui una rete neurale
+apprende una politica di navigazione ottimale tramite l'interazione ripetuta con
+l'ambiente simulato, che costituisce l'approccio proposto in questo lavoro. Il metodo del
+gradiente \`e puramente reattivo e privo di memoria, mentre l'approccio RL mira a
+superarne i limiti strutturali apprendendo strategie che sfruttano la storia
+dell'episodio e le informazioni contestuali sull'ambiente; il confronto, condotto a
+parit\`a di condizioni su sorgenti mai viste in addestramento, quantifica il contributo
+dell'apprendimento rispetto all'approccio gradient-based classico. Coerentemente con
+questo obiettivo, la tesi \`e strutturata come segue: il Capitolo~\ref{cap:dati} descrive
+i dati utilizzati (simulazioni idrodinamiche MIKE21 della baia di Cecina, dati
+meteo-oceanografici di vento e corrente, sorgenti e scenari) e il modo in cui vengono
+caricati, sincronizzati e gestiti via software; il Capitolo~\ref{cap:ambiente} illustra la
+composizione dell'ambiente di simulazione condiviso dai due approcci --- architettura
+master--slave, spazio delle azioni, action masking, inizializzazione dell'agente e segnale
+di reward; il Capitolo~\ref{cap:fcm}
+presenta il metodo del gradiente,
+dalla stima del gradiente per minimi quadrati alla sua versione adattiva basata
+sull'ottimizzatore Adam, con la relativa analisi sperimentale e i risultati; il
+Capitolo~\ref{cap:rl} introduce l'algoritmo PPO, descrive la nostra implementazione
+(spazio di osservazione, funzione di reward, addestramento) e ne riporta i risultati,
+comprensivi della catena a velocit\`a variabile, del confronto fra formazione a singola e
+doppia corona, dell'analisi delle \emph{spawn map} e del confronto diretto con il metodo
+del gradiente a parit\`a di velocit\`a; il Capitolo~\ref{cap:xai} indaga poi la politica
+appresa dall'interno, chiedendosi su quali grandezze dell'osservazione si regga --- quali
+la rete effettivamente usi e quali servano al compito --- e quale strategia di navigazione
+abbia sviluppato; infine il Capitolo~\ref{cap:concl} riepiloga i risultati principali e
+delinea le possibili direzioni di sviluppo futuro.

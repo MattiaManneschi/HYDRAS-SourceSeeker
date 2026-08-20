@@ -1,0 +1,119 @@
+% ============================================================================
+%  ABSTRACT / SOMMARIO --- documento autonomo per la consegna (PDF/A)
+%  Tesi di Laurea Magistrale --- Progetto HYDRAS
+% ============================================================================
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[italian,english]{babel}
+\usepackage{lmodern}
+\usepackage[top=2.8cm, bottom=2.8cm, left=2.6cm, right=2.6cm]{geometry}
+\usepackage{setspace}
+\setstretch{1.2}
+\usepackage[colorlinks=true, linkcolor=black, citecolor=black, urlcolor=black]{hyperref}
+\hypersetup{
+  pdftitle={Abstract --- Sviluppo di un sistema basato su reinforcement learning per la localizzazione di sorgenti inquinanti in ambiente marino},
+  pdfauthor={Mattia Manneschi}
+}
+
+\pagestyle{empty}
+
+\begin{document}
+
+\begin{center}
+    {\normalsize\scshape Universit\`a degli Studi di Firenze}\\[1pt]
+    {\small\scshape Scuola di Ingegneria}\\[2pt]
+    {\small\scshape Dipartimento di Ingegneria dell'Informazione}\\[1pt]
+    {\small\scshape Dipartimento di Ingegneria Civile e Ambientale}\\[6pt]
+    {\small Tesi di Laurea Magistrale in Ingegneria Informatica}\\[10pt]
+    {\large\bfseries Sviluppo di un sistema basato su reinforcement learning per la
+    localizzazione di sorgenti inquinanti in ambiente marino}\\[8pt]
+    {\small\itshape Candidato:} Mattia Manneschi \qquad
+    {\small\itshape Relatori:} Prof.\ G.\ Battistelli, Prof.\ N.\ Forti, Prof.ssa I.\ Simonetti\\[2pt]
+    {\small Anno Accademico 2025/2026}
+\end{center}
+
+\vspace{4mm}
+\hrule
+\vspace{6mm}
+
+\selectlanguage{italian}
+\subsection*{Sommario}
+
+L'inquinamento delle acque costiere richiede strumenti rapidi ed economici per individuare
+la sorgente di uno sversamento. Questa tesi affronta il problema del \emph{source seeking}
+marino --- la localizzazione autonoma della sorgente di un \emph{plume} inquinante da parte
+di un veicolo subacqueo (AUV) --- confrontando due paradigmi di navigazione sullo stesso
+ambiente di simulazione, costruito a partire da campi di concentrazione, vento e corrente
+prodotti da simulazioni idrodinamiche ad alta risoluzione (MIKE21) di un tratto di mare
+costiero.
+
+Il primo approccio \`e il \emph{Field Climbing Method} (FCM), un metodo analitico che stima
+il gradiente locale di concentrazione da una formazione di sensori e vi risale, nella sua
+versione adattiva basata su Adam. Il secondo \`e un agente di \emph{Reinforcement Learning}
+addestrato con PPO (nella variante MaskablePPO), che apprende una politica di navigazione
+dalle sole osservazioni dei sensori. L'ambiente condiviso adotta una formazione
+master--slave con una o due corone di sensori, uno spazio d'azione discreto con
+\textbf{velocit\`a variabile appresa} e \emph{action masking} per i vincoli di costa e di
+dominio.
+
+I due metodi sono valutati su un insieme di sorgenti \emph{held-out}, mai viste in
+addestramento, attraverso diversi scenari di vento/corrente e finestre temporali di
+diffusione del plume (fino a 1560 episodi per modello). L'agente PPO raggiunge un tasso di successo
+prossimo al \textbf{99\%} e supera nettamente e sistematicamente l'FCM (che non oltrepassa
+il \textbf{64\%}), il cui limite si rivela \emph{strutturale} --- dovuto alla natura
+reattiva e locale del metodo --- e non cinematico. La seconda corona di sensori si rivela un
+vantaggio netto a partire dalle velocit\`a intermedie (da 2~m/s in su): riduce i tempi al
+successo del 25--34\% a parit\`a di affidabilit\`a, mentre alle velocit\`a pi\`u basse
+comporta un piccolo costo di robustezza.
+
+Infine, la politica appresa \`e resa interpretabile tramite \emph{ablation} causale di
+gruppo, valori di Shapley esatti e sonde comportamentali; un esperimento di riaddestramento
+senza formazione ne quantifica il contributo. Il lavoro fornisce una pipeline completa dai
+dati idrodinamici alla politica addestrata e interpretata, e una prova quantitativa del
+vantaggio dell'apprendimento per rinforzo sui metodi reattivi di gradiente.
+
+\medskip
+\noindent\textbf{Parole chiave:} source seeking marino, veicoli autonomi subacquei,
+reinforcement learning, PPO, metodo del gradiente, explainability, inquinamento marino.
+
+\vspace{3mm}
+\selectlanguage{english}
+\subsection*{Abstract}
+
+Coastal water pollution calls for fast and inexpensive tools to locate the source of a
+spill. This thesis addresses marine \emph{source seeking} --- the autonomous localization of
+the source of a pollutant plume by an autonomous underwater vehicle (AUV) --- by comparing
+two navigation paradigms on the same simulation environment, built from concentration, wind
+and current fields produced by high-resolution hydrodynamic simulations (MIKE21) of a
+coastal sea area.
+
+The first approach is the \emph{Field Climbing Method} (FCM), an analytical method that
+estimates the local concentration gradient from a sensor formation and climbs it, in its
+Adam-based adaptive variant. The second is a \emph{Reinforcement Learning} agent trained
+with PPO (in the MaskablePPO variant), which learns a navigation policy from sensor
+observations alone. The shared environment uses a master--slave formation with one or two
+sensor rings, a discrete action space with \emph{learned variable velocity}, and action
+masking for coast and domain constraints.
+
+Both methods are evaluated on a \emph{held-out} set of sources, never seen during training,
+across several wind/current scenarios and plume-diffusion time windows (up to 1560 episodes
+per model). The PPO agent attains a success rate close to \textbf{99\%} and systematically
+outperforms FCM (which never exceeds \textbf{64\%}), whose limitation proves to be
+\emph{structural} rather than kinematic. The second sensor ring becomes a net advantage from
+intermediate velocities (2~m/s and above): it shortens the time to success by 25--34\% at no
+reliability cost, whereas at lower velocities it incurs a small robustness cost.
+
+The learned policy is finally
+made interpretable through causal group ablation, exact Shapley values and behavioral
+probes, and a formation-free retraining experiment quantifies the formation's contribution.
+The work delivers a complete pipeline from hydrodynamic data to a trained and interpreted
+policy, and quantitative evidence of the advantage of reinforcement learning over reactive
+gradient methods.
+
+\medskip
+\noindent\textbf{Keywords:} marine source seeking, autonomous underwater vehicles,
+reinforcement learning, PPO, gradient method, explainability, marine pollution.
+
+\end{document}

@@ -1,0 +1,434 @@
+\chapter{Metodo del gradiente: Field Climbing Method}
+\label{cap:fcm}
+
+\section{Introduzione}
+
+Il \textbf{Field Climbing Method} (FCM) \`e l'approccio gradient-based classico al
+problema del source seeking, adottato in questa tesi come \emph{baseline} algoritmica di
+confronto. L'idea \`e diretta: se l'agente conosce la direzione lungo cui la
+concentrazione del contaminante cresce pi\`u rapidamente, pu\`o muoversi in quella
+direzione e, ripetendo il procedimento ad ogni passo, risalire il plume fino alla
+sorgente. A differenza dell'approccio basato su Reinforcement Learning
+(Capitolo~\ref{cap:rl}), FCM \emph{non richiede una fase di addestramento}: \`e un
+algoritmo puramente reattivo che decide l'azione ad ogni istante basandosi
+esclusivamente sulle letture correnti dei sensori.
+
+Il capitolo presenta due varianti del metodo, ciascuna con la relativa analisi
+sperimentale: il \textbf{FCM puro} a passo fisso (Sezione~\ref{sec:fcm_puro}), con
+l'analisi sul raggio di campionamento, e il \textbf{FCM con passo adattivo} basato
+sull'ottimizzatore Adam (Sezione~\ref{sec:fcm_adam}), con l'analisi sul learning rate.
+
+\paragraph{Protocollo di valutazione.}
+Tutte le analisi sperimentali di questo capitolo sono condotte sulle 26 sorgenti di test
+(SRC107--SRC132) --- riservate alla sola valutazione e impiegate anche per il modello RL
+del Capitolo~\ref{cap:rl}, cos\`i da garantire un confronto equo --- su 4 scenari di vento
+(V0--V3) e 3 chunk temporali, ossia tre istanti della simulazione usati come condizioni
+iniziali distinte (Q1/4, Q1/2, Q3/4), con 2 episodi per scenario: in totale 624 episodi
+per ogni configurazione di parametri.
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{FCM puro}
+\label{sec:fcm_puro}
+
+\subsection{Stima del gradiente per minimi quadrati}
+\label{sec:stima_gradiente}
+
+La squadra di robot legge la concentrazione del contaminante in \textbf{9 punti}: la posizione
+del master $\mathbf{p}$ (concentrazione centrale $C_0$) e gli 8 agenti slave che, in
+formazione attorno al master (Sezione~\ref{sec:master_slave}), campionano
+$C(\mathbf{p} + \boldsymbol{\delta}_i)$ con offset
+$\boldsymbol{\delta}_i = r_s\,\hat{d}_i$, dove $r_s$ \`e il \emph{sensor range} e
+$\hat{d}_i$ \`e uno degli 8 versori cardinali e diagonali (N, S, E, O, NE, SE, NO, SO).
+Tali direzioni coincidono con le 8 azioni discrete disponibili al master.
+
+Assumendo un'approssimazione lineare locale del campo (sviluppo di Taylor al
+primo ordine):
+\begin{equation}
+    C(\mathbf{p} + \boldsymbol{\delta}_i) \approx C(\mathbf{p}) + \nabla C \cdot \boldsymbol{\delta}_i
+    \label{eq:taylor}
+\end{equation}
+
+Sottraendo $C_0$ da ciascuna lettura e normalizzando per $r_s$, la
+relazione~\eqref{eq:taylor} diventa $\hat{d}_i \cdot \nabla C \approx b_i$ per ogni
+sensore $i$, con:
+\begin{equation}
+    b_i = \frac{C_i - C_0}{r_s}, \qquad C_i \equiv C(\mathbf{p}+\boldsymbol{\delta}_i)
+\end{equation}
+
+Raccogliendo gli 8 vincoli in forma matriciale
+($\mathbf{D} \in \mathbb{R}^{8 \times 2}$, $D_{ij} = (\hat{d}_i)_j$) si ottiene il
+sistema sovradeterminato $\mathbf{D}\,\nabla C \approx \mathbf{b}$, risolto per
+minimi quadrati. La disposizione simmetrica delle 8 direzioni (per ogni $\hat{d}_i$
+\`e presente anche $-\hat{d}_i$) implica $\mathbf{D}^\top\mathbf{D} = 4\,\mathbf{I}_2$:
+il sistema \`e perfettamente condizionato e la stima del gradiente ha forma chiusa:
+\begin{equation}
+    \hat{\nabla C} = \frac{1}{4}\,\mathbf{D}^\top\mathbf{b}
+    \;=\; \frac{1}{4}\sum_{i=1}^{8} \hat{d}_i\,b_i
+    \label{eq:grad_ls}
+\end{equation}
+
+In termini implementativi, la stima si riduce a poche righe: dalle 9 letture si
+costruisce il vettore $\mathbf{b}$ e si risolve il sistema ai minimi quadrati con
+\texttt{numpy}.
+
+\begin{lstlisting}
+def estimate_gradient(obs, r_s, D):     # D: matrice 8x2 delle direzioni d_i
+    c0      = obs[0]                     # lettura del master (concentrazione centrale)
+    sensors = obs[28:36]                 # 8 letture riportate dagli slave
+    b = (sensors - c0) / r_s             # gradiente proiettato sulle direzioni (eq. 4.2)
+    grad, *_ = np.linalg.lstsq(D, b, rcond=None)   # soluzione ai minimi quadrati (eq. 4.3)
+    return grad
+\end{lstlisting}
+
+\subsection{Selezione dell'azione}
+\label{sec:azione_fcm}
+
+Le 8 azioni discrete corrispondono esattamente alle 8 direzioni $\hat{d}_i$ usate
+dai sensori. Nel FCM puro il passo dell'agente \`e fisso e pari a
+$\Delta x = v_{\max}\,\Delta t = 1\,\text{m/s}\times 10\,\text{s} = 10\,\text{m}$.
+Avendo gi\`a stimato il gradiente $\hat{\nabla C}$ tramite la~\eqref{eq:grad_ls}, si
+sceglie la direzione discreta pi\`u allineata ad esso:
+\begin{equation}
+    a^* = \operatorname*{argmax}_{i \in \{1,\ldots,8\}} \; \hat{d}_i \cdot \hat{\nabla C}
+    \label{eq:argmax_fcm}
+\end{equation}
+
+Se $\|\hat{\nabla C}\| < 10^{-12}$ (campo localmente piatto), l'azione viene scelta
+uniformemente a caso tra le direzioni valide. In entrambi i casi, le direzioni non
+ammissibili (collisione con la costa) sono escluse tramite l'\emph{action masking}
+descritto nella Sezione~\ref{sec:masking}.
+
+\subsection{Analisi del raggio di campionamento}
+\label{sec:sensor_range}
+
+Il parametro critico del FCM \`e il \textbf{raggio di campionamento} (\emph{sensor
+range}) $r_s$, ovvero la distanza a cui gli agenti slave si posizionano rispetto al
+master per misurare la concentrazione (Sezione~\ref{sec:master_slave}). La sua scelta
+\`e un compromesso: un raggio troppo piccolo rende le letture insensibili al gradiente,
+poich\'e le differenze di concentrazione su scala locale diventano trascurabili e
+dominate dal rumore; un raggio troppo grande campiona zone distanti dalla posizione
+corrente, riducendo la validit\`a dell'approssimazione lineare~\eqref{eq:taylor} su cui
+si fonda la stima del gradiente e aumentando il tempo di convergenza.
+
+Per individuare il valore ottimale sono stati testati cinque raggi
+$r_s \in \{20,\allowbreak 50,\allowbreak 100,\allowbreak 150,\allowbreak 200\}\,\text{m}$
+con il FCM a passo fisso, su 624 episodi per valore. La Tabella~\ref{tab:sensor_sweep}
+riporta i risultati.
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\resizebox{\linewidth}{!}{%
+\setlength{\tabcolsep}{4pt}%
+\begin{tabular}{C{1.3cm} C{1.0cm} C{1.5cm} C{1.0cm} C{1.0cm} C{1.0cm} C{1.0cm} C{1.0cm} C{1.0cm} C{1.0cm}}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{$r_s$}} &
+\textcolor{white}{\textbf{SR\%}} &
+\textcolor{white}{\textbf{Step medi}} &
+\textcolor{white}{\textbf{V0}} &
+\textcolor{white}{\textbf{V1}} &
+\textcolor{white}{\textbf{V2}} &
+\textcolor{white}{\textbf{V3}} &
+\textcolor{white}{\textbf{Q1/4}} &
+\textcolor{white}{\textbf{Q1/2}} &
+\textcolor{white}{\textbf{Q3/4}} \\
+\midrule
+20\,m  & 19{,}4 & 274{,}5 & 17{,}9 & 10{,}3 & 19{,}2 & 30{,}1 & 41{,}3 & 1{,}0  & 15{,}9 \\
+\rowcolor{best}
+\textbf{50\,m}  & \textbf{32{,}9} & \textbf{182{,}7} & \textbf{39{,}7} & \textbf{16{,}0} & \textbf{23{,}7} & \textbf{51{,}9} & \textbf{50{,}5} & \textbf{11{,}5} & \textbf{36{,}5} \\
+100\,m & 18{,}8 & 411{,}6 & 28{,}2 & 8{,}3  & 16{,}0 & 22{,}4 & 28{,}8 & 1{,}4  & 26{,}0 \\
+150\,m & 13{,}6 & 546{,}4 & 16{,}0 & 5{,}1  & 12{,}2 & 21{,}2 & 16{,}8 & 1{,}0  & 23{,}1 \\
+200\,m & 13{,}8 & 398{,}7 & 6{,}4  & 6{,}4  & 13{,}5 & 28{,}8 & 11{,}1 & 7{,}7  & 22{,}6 \\
+\bottomrule
+\end{tabular}}
+\caption{Sweep sul raggio di campionamento $r_s$ (FCM a passo fisso, 624 episodi per
+         valore). In verde il valore ottimale.}
+\label{tab:sensor_sweep}
+\end{table}
+
+Il valore ottimale risulta $r_s = 50\,\text{m}$, con un success rate globale del
+$32{,}9\%$ e il tempo medio al successo pi\`u basso ($\sim$30\,min). Per raggi
+superiori il success rate crolla e il tempo di convergenza aumenta, a causa
+dell'approssimazione lineare sempre meno valida su scale spaziali grandi rispetto alla
+struttura del plume; per $r_s = 20\,\text{m}$, viceversa, il segnale locale \`e troppo
+debole. Il valore $r_s = 50\,\text{m}$ viene quindi adottato in tutto il seguito.
+
+Le Figure~\ref{fig:fcmpure_sr}--\ref{fig:fcmpure_dist} analizzano il comportamento del
+FCM puro alla configurazione ottimale ($r_s = 50\,\text{m}$) sui 624 episodi.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.97\linewidth]{fcmpure_sr_analysis.png}
+  \caption{Success rate per scenario di vento e chunk temporale --- FCM puro
+           $r_s = 50\,\text{m}$. Si evince che i fallimenti si concentrano negli scenari a
+           plume diffuso (V1, V2) e nel chunk intermedio Q1/2, mentre V0/V3 e Q1/4 sono i
+           pi\`u favorevoli.}
+  \label{fig:fcmpure_sr}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.97\linewidth]{fcmpure_success_time.png}
+  \caption{Distribuzione del tempo al successo --- FCM puro $r_s = 50\,\text{m}$. La
+           maggior parte dei successi avviene nei primi minuti, ma la coda lunga rivela
+           numerosi episodi in cui l'agente vaga a lungo prima di convergere.}
+  \label{fig:fcmpure_time}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.97\linewidth]{fcmpure_distance_time.png}
+  \caption{Distanza media dalla sorgente nel tempo --- FCM puro $r_s = 50\,\text{m}$. Gli
+           episodi di successo riducono progressivamente la distanza, mentre i fallimenti
+           restano stabili a grande distanza: il metodo reattivo entra in stallo senza
+           riuscire ad avvicinarsi.}
+  \label{fig:fcmpure_dist}
+\end{figure}
+
+\paragraph{Limiti del FCM puro.}
+Anche al raggio ottimale, il success rate globale del FCM puro si ferma al $32{,}9\%$. La
+causa principale \`e il \emph{passo fisso}, indipendente dalla storia del gradiente:
+l'agente reagisce unicamente alla lettura corrente, senza memoria delle direzioni
+percorse. In presenza di segnale rumoroso o plume diffuso ci\`o produce traiettorie
+oscillanti e convergenza lenta, e il metodo tende a bloccarsi sui massimi locali di
+concentrazione frequenti in ambiente costiero. Questi limiti motivano la variante
+adattiva presentata nella sezione seguente.
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{FCM con passo adattivo (Adam)}
+\label{sec:fcm_adam}
+
+Per superare i limiti del passo fisso, si sostituisce la regola di
+selezione~\eqref{eq:argmax_fcm} con un aggiornamento basato sull'ottimizzatore
+\textbf{Adam} (\emph{Adaptive Moment Estimation})~\citep{adam}. Adam accumula un
+\emph{momentum} sul gradiente stimato e normalizza il passo per la varianza storica
+del gradiente stesso, ottenendo un comportamento pi\`u robusto al rumore e pi\`u
+direzionato.
+
+Ad ogni timestep $t$ l'agente stima il gradiente locale
+$\hat{\nabla}C_t \in \mathbb{R}^2$ tramite la~\eqref{eq:grad_ls} e calcola il
+vettore di passo secondo la regola di aggiornamento Adam:
+\begin{align}
+    \mathbf{m}_t &= \beta_1\,\mathbf{m}_{t-1} + (1-\beta_1)\,\hat{\nabla}C_t \\
+    \mathbf{v}_t &= \beta_2\,\mathbf{v}_{t-1} + (1-\beta_2)\,\hat{\nabla}C_t^{\,2} \\
+    \hat{\mathbf{m}}_t &= \frac{\mathbf{m}_t}{1-\beta_1^t}, \qquad
+    \hat{\mathbf{v}}_t = \frac{\mathbf{v}_t}{1-\beta_2^t} \\[4pt]
+    \mathbf{s}_t &= lr \cdot \frac{\hat{\mathbf{m}}_t}{\sqrt{\hat{\mathbf{v}}_t} + \varepsilon}
+    \label{eq:adam_step}
+\end{align}
+
+dove $\mathbf{m}_t, \mathbf{v}_t \in \mathbb{R}^2$ sono il primo e il secondo momento
+del gradiente (inizializzati a $\mathbf{0}$ all'inizio di ogni episodio),
+$\beta_1 = 0{,}9$, $\beta_2 = 0{,}999$, $\varepsilon = 10^{-8}$, e $lr$ \`e il
+\emph{learning rate}, che rappresenta il passo base in metri. Il passo fisico effettivo
+\`e limitato superiormente da $\Delta x_{\max} = 50\,\text{m}$, e l'azione discreta
+viene scelta come la direzione $\hat{d}_i$ pi\`u allineata al vettore $\mathbf{s}_t$:
+\begin{equation}
+    \Delta x_t = \min\!\left(\left\|\mathbf{s}_t\right\|,\; \Delta x_{\max}\right),
+    \qquad
+    a_t = \operatorname*{argmax}_{i \in \{1,\ldots,8\}} \; \hat{d}_i \cdot \mathbf{s}_t
+\end{equation}
+
+Il momentum ($\beta_1$) mantiene la direzione coerente su pi\`u timestep, smorzando
+le oscillazioni dovute al rumore del sensore; la normalizzazione per
+$\sqrt{\hat{\mathbf{v}}_t}$ riduce il passo nelle direzioni in cui il gradiente \`e
+inconsistente nel tempo. Lo pseudocodice dell'aggiornamento \`e riportato di seguito.
+
+\begin{figure}[H]
+\noindent\rule{\linewidth}{0.8pt}\vspace{-3pt}
+\noindent\rule{\linewidth}{0.4pt}
+\vspace{4pt}
+
+\noindent\textit{FCM Adam: aggiornamento del passo per ogni timestep dell'episodio}
+
+\vspace{4pt}
+\noindent\rule{\linewidth}{0.4pt}
+\vspace{4pt}
+
+\small
+\begin{tabbing}
+\hspace{2.2em}\=\hspace{2.2em}\=\kill
+\textit{--- Inizio episodio ---}\\[4pt]
+$\mathbf{m} = \mathbf{0}_2$;\quad $\mathbf{v} = \mathbf{0}_2$;\quad $t = 0$;\\[8pt]
+\textit{--- Per ogni timestep ---}\\[4pt]
+$\hat{\nabla}C$ = stima\_gradiente(obs);\quad\textit{(minimi quadrati, 8 sensori)}\\[4pt]
+$t = t + 1$;\\[4pt]
+$\mathbf{m} = \beta_1 \cdot \mathbf{m} + (1 - \beta_1) \cdot \hat{\nabla}C$;\\[4pt]
+$\mathbf{v} = \beta_2 \cdot \mathbf{v} + (1 - \beta_2) \cdot \hat{\nabla}C^{\,2}$;\\[6pt]
+$\hat{\mathbf{m}} = \mathbf{m}\;/\;(1 - \beta_1^{\,t})$;\quad
+$\hat{\mathbf{v}} = \mathbf{v}\;/\;(1 - \beta_2^{\,t})$;\\[6pt]
+$\mathbf{s} = lr \cdot \hat{\mathbf{m}}\;/\;(\sqrt{\hat{\mathbf{v}}} + \varepsilon)$;\\[4pt]
+$\Delta x = \min(\|\mathbf{s}\|,\; \Delta x_{\max})$;\\[4pt]
+$a = \operatorname{argmax}_i\;(\hat{d}_i \cdot \mathbf{s})$;
+\end{tabbing}
+
+\vspace{2pt}
+\noindent\rule{\linewidth}{0.4pt}\vspace{-3pt}
+\noindent\rule{\linewidth}{0.8pt}
+\end{figure}
+
+Concretamente, ad ogni timestep la selezione dell'azione si traduce in:
+
+\begin{lstlisting}
+self.t += 1
+self.m = b1 * self.m + (1 - b1) * grad           # primo momento
+self.v = b2 * self.v + (1 - b2) * grad**2         # secondo momento
+m_hat = self.m / (1 - b1**self.t)                 # bias correction
+v_hat = self.v / (1 - b2**self.t)
+step  = lr * m_hat / (np.sqrt(v_hat) + eps)       # vettore di passo Adam
+action = int(np.argmax(D @ step))                 # direzione piu' allineata
+\end{lstlisting}
+
+\subsection{Interpretazione del learning rate}
+
+Il parametro $lr$ rappresenta il passo asintotico per direzioni cardinali del
+gradiente: a convergenza dei momenti Adam, $\|\mathbf{s}_t\| \to lr$ per gradienti
+puramente orizzontali o verticali, e fino a $lr\sqrt{2}$ per gradienti diagonali
+(comunque limitato a $\Delta x_{\max}$). Con $\Delta t = 10\,\text{s}$, un passo di
+$lr = 10\,\text{m}$ corrisponde a una velocit\`a di $1\,\text{m/s}$, compatibile con la
+velocit\`a nominale del veicolo; valori maggiori di $lr$ implicano velocit\`a
+proporzionalmente pi\`u alte (fino a $5\,\text{m/s}$ per $lr = 50\,\text{m}$), a scapito
+del realismo fisico.
+
+\subsection{Analisi del learning rate e risultati}
+\label{sec:fcm_lr}
+
+Il parametro $lr$ \`e stato ottimizzato tramite uno sweep su
+$lr \in \{10, 20, 30, 40, 50\}\,\text{m}$, con 624 episodi per valore e sensor range
+$r_s = 50\,\text{m}$. La Tabella~\ref{tab:fcm_sweep} riporta il success rate globale, gli
+step medi al successo e il dettaglio per scenario di vento e chunk temporale, confrontati
+con la baseline a passo fisso ($10\,\text{m}$).
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.05}
+\resizebox{\linewidth}{!}{%
+\setlength{\tabcolsep}{4pt}%
+\begin{tabular}{C{1.5cm} C{1.0cm} C{1.5cm} C{1.0cm} C{1.0cm} C{1.0cm} C{1.0cm} C{1.0cm} C{1.0cm} C{1.0cm}}
+\toprule
+\rowcolor{headerbg}
+\textcolor{white}{\textbf{$lr$}} &
+\textcolor{white}{\textbf{SR\%}} &
+\textcolor{white}{\textbf{Step medi}} &
+\textcolor{white}{\textbf{V0}} &
+\textcolor{white}{\textbf{V1}} &
+\textcolor{white}{\textbf{V2}} &
+\textcolor{white}{\textbf{V3}} &
+\textcolor{white}{\textbf{Q1/4}} &
+\textcolor{white}{\textbf{Q1/2}} &
+\textcolor{white}{\textbf{Q3/4}} \\
+\midrule
+FCM puro & 32{,}9 & 182{,}7 & 39{,}7 & 16{,}0 & 23{,}7 & 51{,}9 & 50{,}5 & 11{,}5 & 36{,}5 \\
+\rowcolor{rowalt}
+10\,m & 54{,}6 & 174{,}0 & 73{,}7 & 29{,}5 & 35{,}9 & 79{,}5 & 77{,}9 & 30{,}3 & 55{,}8 \\
+20\,m & 58{,}2 & 131{,}5 & 80{,}1 & 32{,}1 & 34{,}6 & 85{,}9 & 81{,}7 & 38{,}0 & 54{,}8 \\
+\rowcolor{rowalt}
+30\,m & 60{,}7 & 110{,}4 & 84{,}6 & 30{,}8 & 37{,}2 & 90{,}4 & 86{,}1 & 39{,}4 & 56{,}7 \\
+\rowcolor{best}
+\textbf{40\,m} & \textbf{63{,}5} & \textbf{115{,}1} & \textbf{84{,}6} & \textbf{35{,}3} & \textbf{41{,}7} & \textbf{92{,}3} & \textbf{90{,}9} & \textbf{44{,}2} & \textbf{55{,}3} \\
+50\,m & 62{,}2 & 82{,}9 & 84{,}6 & 34{,}6 & 37{,}2 & 92{,}3 & 89{,}4 & 41{,}8 & 55{,}3 \\
+\bottomrule
+\end{tabular}}
+\caption{Sweep su $lr$ per FCM Adam ($\beta_1{=}0{,}9$, $\beta_2{=}0{,}999$,
+         $\Delta x_{\max}{=}50\,\text{m}$, $r_s{=}50\,\text{m}$, 624 episodi per valore).
+         In verde la configurazione con il success rate pi\`u alto.}
+\label{tab:fcm_sweep}
+\end{table}
+
+Il FCM Adam con $lr = 40\,\text{m}$ raggiunge il success rate globale pi\`u alto,
+\textbf{63{,}5\%}, con un guadagno di \textbf{+30{,}6 punti percentuali} rispetto al
+FCM puro a passo fisso (32{,}9\%). Il success rate \textbf{non cresce indefinitamente}
+con $lr$: sale da $54{,}6\%$ ($lr = 10\,\text{m}$) fino al massimo a $40\,\text{m}$, per
+poi ripiegare leggermente a $62{,}2\%$ a $50\,\text{m}$. Esiste dunque un passo ottimale,
+oltre il quale falcate troppo ampie iniziano a scavalcare la struttura del plume anzich\'e
+seguirla. Il miglioramento rispetto al FCM puro \`e comunque diffuso su tutti gli scenari,
+con V3 e Q1/4 che beneficiano maggiormente del momentum, mentre V1, V2 e Q1/2 restano i
+pi\`u critici.
+
+Gli step medi al successo calano complessivamente all'aumentare di $lr$ (da 174 a 83):
+passi pi\`u ampi riducono il numero di timestep necessari a raggiungere la sorgente.
+L'andamento non \`e per\`o regolare --- a $lr = 40\,\text{m}$ gli step risalgono a
+$115{,}1$ contro i $110{,}4$ di $30\,\text{m}$ --- e la spiegazione pi\`u naturale \`e un
+effetto di \emph{selezione}: \`e proprio a $40\,\text{m}$ che il metodo porta a termine il
+maggior numero di episodi, inclusi quelli difficili e lunghi che alle altre configurazioni
+finivano in timeout e non entravano nella media. Un success rate pi\`u alto include
+successi pi\`u faticosi, e la media degli step ne risente.
+
+Si ricorda infine (Sezione~\ref{sec:fcm_adam}) che valori elevati di $lr$ comportano
+velocit\`a non realistiche: il valore $lr = 10\,\text{m}$, fisicamente compatibile con la
+velocit\`a nominale del veicolo, raggiunge gi\`a il $54{,}6\%$ di SR.
+
+\paragraph{Comparabilit\`a degli spawn.} Va segnalato che il FCM puro e il FCM adattivo non
+condividono lo stesso algoritmo di inizializzazione (Sezione~\ref{sec:spawn}): il primo, a
+passo fisso, adotta la \emph{cascata di anelli} (distanza media di spawn $\sim$800\,m),
+mentre il secondo, a passo variabile, adotta il \emph{disco adattivo}, che produce spawn in
+media pi\`u vicini alla sorgente. Una parte del divario fra le due varianti riflette quindi
+la diversa distribuzione delle distanze iniziali, e non il solo effetto dell'ottimizzatore
+Adam. Il confronto pi\`u rigoroso, a parit\`a di condizioni, \`e quello fra RL e FCM adattivo
+alla stessa velocit\`a massima (Sezione~\ref{sec:rl_fullrange}), in cui entrambi i metodi
+condividono il disco adattivo.
+
+Le Figure~\ref{fig:fcm_sr}--\ref{fig:fcm_dist} analizzano il comportamento del modello
+migliore ($lr = 40\,\text{m}$) sui 624 episodi.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.97\linewidth]{plot_sr_analysis.png}
+  \caption{Success rate per scenario di vento e chunk temporale --- FCM Adam
+           $lr = 40\,\text{m}$. Rispetto al FCM puro il miglioramento \`e diffuso su tutti
+           gli scenari, ma V1, V2 e Q1/2 rimangono i pi\`u critici: il momentum mitiga ma
+           non elimina la difficolt\`a del plume diffuso.}
+  \label{fig:fcm_sr}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.97\linewidth]{plot_success_time_dist.png}
+  \caption{Distribuzione del tempo al successo --- FCM Adam $lr = 40\,\text{m}$. La
+           distribuzione \`e pi\`u concentrata sui tempi brevi rispetto al FCM puro: il
+           passo adattivo riduce il numero di timestep necessari a raggiungere la
+           sorgente.}
+  \label{fig:fcm_time}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.97\linewidth]{plot_distance_over_time.png}
+  \caption{Distanza media dalla sorgente nel tempo --- FCM Adam $lr = 40\,\text{m}$. La
+           curva dei successi cala pi\`u rapidamente che nel FCM puro; resta comunque una
+           quota di fallimenti stabili a grande distanza negli scenari pi\`u difficili.}
+  \label{fig:fcm_dist}
+\end{figure}
+
+La Figura~\ref{fig:fcm_traj} mostra due episodi rappresentativi, tratti dalla
+configurazione $lr = 50\,\text{m}$: un successo in condizioni di plume compatto (V0) e un
+fallimento in condizioni di plume disperso (V2). Nel caso di fallimento, il campo diffuso
+annulla il gradiente locale e l'agente non riesce a mantenere una direzione affidabile
+verso la sorgente, terminando in timeout --- un limite qualitativo della risalita di
+gradiente che non dipende dal particolare valore di $lr$.
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}{0.74\textwidth}
+    \includegraphics[width=\linewidth]{fcm_success_traj.png}
+    \caption{Successo (V0, plume compatto).}
+  \end{subfigure}
+
+  \vspace{4mm}
+  \begin{subfigure}{0.74\textwidth}
+    \includegraphics[width=\linewidth]{fcm_failure_traj.png}
+    \caption{Fallimento (V2, plume disperso).}
+  \end{subfigure}
+  \caption{Traiettorie rappresentative del FCM Adam $lr = 50\,\text{m}$. Nel successo
+           (a) l'agente risale il plume compatto con traiettoria diretta; nel fallimento
+           (b) il plume disperso annulla il gradiente locale e l'agente vaga senza
+           convergere, terminando in timeout.}
+  \label{fig:fcm_traj}
+\end{figure}
+
+In sintesi, il metodo del gradiente adattivo migliora sensibilmente la baseline a passo
+fisso, ma resta limitato dalla sua natura reattiva: negli scenari a plume diffuso
+(V1, V2, Q1/2) il gradiente locale degenera e il success rate rimane basso. Questo
+limite strutturale motiva l'approccio basato su Reinforcement Learning presentato nel
+capitolo seguente.

@@ -1,0 +1,345 @@
+\chapter{Il dataset}
+\label{cap:dati}
+
+Questo capitolo descrive i \textbf{dati} su cui si fonda l'intero lavoro. Si parte dai
+dati grezzi --- le simulazioni idrodinamiche del campo di concentrazione e i dati
+meteo-oceanografici di vento e corrente (Sezione~\ref{sec:dati}) --- per poi illustrare
+come questi vengono caricati, sincronizzati e gestiti via software
+(Sezione~\ref{sec:dataloader}). Su questi dati viene costruito l'ambiente di simulazione
+vero e proprio, oggetto del Capitolo~\ref{cap:ambiente} e condiviso dai due approcci
+confrontati nella tesi: ci\`o che cambia tra i due \`e unicamente la politica che governa
+l'agente, non i dati n\'e l'ambiente.
+
+\section{Dati utilizzati}
+\label{sec:dati}
+
+\subsection{Modello idrodinamico MIKE21}
+\label{sec:mike}
+
+Il campo di concentrazione del contaminante \`e ottenuto da simulazioni idrodinamiche
+realizzate con \textbf{MIKE21 Flow Model FM} (\emph{Danish Hydraulic Institute},
+DHI)~\citep{mike21}, un codice ai volumi finiti basato sulla formulazione bidimensionale
+delle equazioni di Navier--Stokes per flussi incomprimibili che, sotto le ipotesi di
+Boussinesq e di distribuzione idrostatica della pressione, si riduce alle equazioni delle
+acque basse (\emph{Shallow Water Equations}). Il codice include la simulazione dei
+processi di advezione e dispersione/diffusione di un inquinante non reattivo, trattato
+con approccio euleriano: il trasporto \`e descritto a partire da sorgenti di massa
+caratterizzate da una portata e da una concentrazione assegnate.
+
+La discretizzazione spaziale del dominio \`e realizzata mediante una \textbf{griglia a
+elementi triangolari di dimensione variabile}, che consente un'elevata risoluzione nelle
+aree di maggiore interesse mantenendo una discretizzazione pi\`u grossolana altrove, al
+fine di contenere i tempi di calcolo. Il dominio di calcolo comprende l'area circostante
+il porto di Cecina (Figura~\ref{fig:dominio}), con un'estensione di circa
+$16 \times 14\,\text{km}$ e una dimensione
+caratteristica della griglia variabile fra circa $10\,\text{m}$ in prossimit\`a del porto
+(zona di interesse) e circa $150\,\text{m}$ nelle aree pi\`u lontane.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{dominio_batimetria.png}
+  \caption{Dominio di calcolo del modello idrodinamico. A sinistra: batimetria e mesh a
+           elementi triangolari di dimensione variabile (pi\`u fitta nella zona di
+           interesse). A destra: estensione del dominio ($\sim$$16\times14\,\text{km}$),
+           area di interesse (riquadro) da cui \`e estratto il dataset e nodi CMEMS lungo i
+           bordi usati per le condizioni al contorno. Baia di Cecina (costa toscana).}
+  \label{fig:dominio}
+\end{figure}
+
+\subsection{Forzanti e condizioni al contorno}
+\label{sec:forzanti}
+
+Il modello locale realizza un \emph{downscaling idrodinamico} del bacino del
+Mediterraneo, incrementando la risoluzione spaziale da circa $4{,}5\,\text{km}$ del
+modello a grande scala fino a circa $10\,\text{m}$ nell'area di interesse. Le condizioni
+al contorno di livello della superficie libera e di velocit\`a della corrente sono
+derivate dal prodotto CMEMS~\citep{cmems}
+\texttt{MEDSEA\_\allowbreak ANALYSIS\_\allowbreak FORECAST\_\allowbreak PHY\_\allowbreak 006\_013},
+che fornisce dati orari delle componenti zonale e meridionale della velocit\`a di
+corrente e del livello marino. Per ciascun nodo di calcolo ai bordi del dominio sono
+imposte condizioni al contorno di tipo \emph{Flather}~\citep{oddo_pinardi}, mediante
+l'imposizione dei valori orari delle componenti $(u, v)$ e dell'elevazione della
+superficie libera, interpolati linearmente dai nodi CMEMS disponibili lungo i bordi.
+
+La forzante di vento \`e imposta come variabile nel tempo e costante sul dominio, ed \`e
+estratta dal dataset di \emph{reanalysis} \textbf{ERA5}~\citep{era5} dell'ECMWF
+(componenti del vento a $10\,\text{m}$, $u_{10}, v_{10}$, a risoluzione oraria). In questa
+fase non vengono considerati alcuni contributi al trasporto assunti come secondari: le
+correnti indotte dal moto ondoso (deriva litoranea, correnti di ritorno) e gli apporti di
+acqua dolce (scarichi fluviali, runoff superficiale).
+
+\subsection{Scenari idrodinamici e di vento}
+\label{sec:scenari}
+
+Le serie temporali CMEMS ai bordi del dominio (2024--2025) sono state classificate in
+finestre di 48 ore tramite descrittori sintetici (intensit\`a media della corrente,
+persistenza direzionale, variabilit\`a del livello marino) e raggruppate con un algoritmo
+di \emph{clustering} k-means in 4 classi idrodinamiche di riferimento, che rappresentano
+regimi distinti in termini di intensit\`a della corrente, persistenza direzionale e
+variabilit\`a del livello: dalla Classe~1 (regime moderato con elevata variabilit\`a del
+livello) alla Classe~4 (regime energetico e altamente persistente). Le simulazioni
+adottate in questa fase si riferiscono alla sola \textbf{Classe 2} (regime moderato e
+persistente, con correnti di intensit\`a intermedia, direzione stabile e bassa
+variabilit\`a del livello, ovvero condizioni relativamente stazionarie e ben organizzate),
+rappresentata dalla finestra del 19--20 maggio 2024.
+
+Analogamente, l'analisi statistica delle serie di vento ERA5 (intensit\`a, direzione,
+persistenza; Figura~\ref{fig:rosa_venti}) ha portato a definire \textbf{4 classi di vento}
+rappresentative, sovrapposte alla condizione idrodinamica di riferimento:
+\begin{itemize}
+    \item \textbf{V0} --- \emph{condizioni di calma / vento debole}. Vento di bassa
+          intensit\`a (circa 1{,}5--2\,m/s), senza una direzione dominante significativa;
+          rappresenta condizioni con forcing eolico trascurabile.
+    \item \textbf{V1} --- \emph{vento persistente da NO}. Direzione prevalente compresa tra
+          310\textdegree{} e 330\textdegree, con velocit\`a
+          fino a 8--10\,m/s; rappresenta uno dei regimi dominanti lungo costa.
+    \item \textbf{V2} --- \emph{vento persistente da SO}. Direzione prevalente tra
+          230\textdegree{} e 250\textdegree, con velocit\`a
+          fino a 8--10\,m/s; rappresenta il regime opposto rispetto al precedente, con
+          effetti rilevanti sull'inversione del trasporto lungo costa.
+    \item \textbf{V3} --- \emph{vento da settore orientale}. Direzione prevalente tra
+          110\textdegree{} e 130\textdegree, con velocit\`a
+          fino a 6--8\,m/s; rappresenta un regime meno frequente ma significativo, associato
+          a condizioni di trasporto trasversale o secondario.
+\end{itemize}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.62\linewidth]{rosa_venti.png}
+  \caption{Rosa dei venti dell'area (dati ERA5 2024--2025): distribuzione di frequenza per
+           direzione e intensit\`a. I settori dominanti da NO e da SO --- ben visibili ---
+           motivano le classi di vento V1 e V2; le classi V0--V3 sintetizzano in modo
+           compatto questa climatologia eolica.}
+  \label{fig:rosa_venti}
+\end{figure}
+
+Per le classi V1--V3 il vento \`e modellato con un profilo temporale tipico: 8 ore di
+calma iniziale, 6 ore di aumento lineare fino all'intensit\`a massima, 12 ore di intensit\`a
+massima e 6 ore di diminuzione lineare. Ogni scenario genera plume con morfologie
+marcatamente diverse (Figura~\ref{fig:plume}): da configurazioni compatte e direzionate a
+configurazioni diffuse e frammentate.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{plume_scenarios.png}
+  \caption{Campo di concentrazione del contaminante (plume) per la stessa sorgente
+           ($\star$) sotto i quattro scenari di vento, allo stesso istante (chunk Q1/2).
+           In V0 (calma) il plume resta compatto attorno alla sorgente; con vento
+           persistente (V1 da NO, V2 da SO) viene avvettato lungo costa e si allunga/diffonde;
+           in V3 (da E) \`e sospinto verso il largo. Mare in azzurro, terraferma in bianco,
+           concentrazione in scala gialla--rossa.}
+  \label{fig:plume}
+\end{figure}
+
+\subsection{Sorgenti e formato dei dati}
+\label{sec:sorgenti}
+
+Nell'area di interesse sono distribuite \textbf{132 sorgenti} equispaziate di circa
+$200\,\text{m}$, ciascuna caratterizzata da una portata costante di $50\,\text{l/s}$ e da
+una concentrazione di $1000\,\text{g/m}^3$ dell'inquinante target. Ogni sorgente \`e
+simulata sotto i 4 scenari di vento, per un totale di $132 \times 4 = 528$ simulazioni.
+I campi di concentrazione risultanti sono estratti in formato \textbf{NetCDF} su una
+griglia regolare con passo di $10\,\text{m}$ e intervallo temporale di 2 minuti,
+nell'area compresa fra le coordinate $x \in [619000, 622000]$ e
+$y \in [4794500, 4797000]$\,m (UTM32N), corrispondente a un riquadro di
+$3 \times 2{,}5\,\text{km}$ ($300 \times 250$ celle). I file seguono la convenzione di
+nome \texttt{CL02\_<vento>\_SRC<num>\_Conc\_10mGrid.nc}; i corrispondenti campi di
+corrente $(u, v)$, comuni a tutte le sorgenti di uno stesso scenario, seguono la
+convenzione \texttt{CL02\_<vento>\_U\_V\_10mGrid.nc} (i campi di corrente sono comuni a
+tutte le sorgenti di uno stesso scenario, in quanto la presenza della sorgente altera il
+campo di moto solo localmente). Sorgente e scenario di ciascun file sono ricavati dal nome
+tramite una semplice espressione regolare:
+
+\begin{lstlisting}
+m = re.match(r"CL02_(V\d)_(SRC\d+)_Conc", filename)
+version, source_id = m.group(1), m.group(2)   # es. ("V2", "SRC042")
+\end{lstlisting}
+
+\subsection{Suddivisione del dataset e augmentation temporale}
+\label{sec:split}
+
+La suddivisione del dataset e l'augmentation temporale descritte di seguito sono
+\textbf{comuni a entrambi gli approcci} confrontati nella tesi (Capitoli~\ref{cap:fcm}
+e~\ref{cap:rl}), e fanno quindi parte dell'impostazione condivisa dell'ambiente di
+simulazione.
+
+Per garantire una valutazione su sorgenti mai osservate durante l'addestramento del
+modello RL, le 132 sorgenti sono suddivise in un insieme di \textbf{training}
+(SRC001--SRC106, 80\%, 106 sorgenti) e in un insieme di \textbf{inferenza} held-out
+(SRC107--SRC132, 20\%, 26 sorgenti), riservato alla sola valutazione. Le stesse 26
+sorgenti held-out sono usate per valutare sia il metodo del gradiente sia il modello RL,
+cos\`i da garantire un confronto equo tra i due approcci.
+
+Poich\'e il campo evolve nel tempo, ogni simulazione viene inoltre suddivisa in
+\textbf{3 chunk temporali} che corrispondono a diversi stadi della dispersione del plume
+e fungono da condizioni iniziali distinte: \textbf{Q1/4} (inizio della propagazione,
+plume compatto), \textbf{Q1/2} (stadio intermedio, plume parzialmente disperso) e
+\textbf{Q3/4} (stadio avanzato, plume pesantemente disperso). Questa
+\emph{augmentation temporale} consente di inizializzare l'agente in tre fasi diverse della
+dispersione, aumentando la variabilit\`a delle condizioni. La combinazione di scenari di
+vento e chunk temporali definisce le \emph{configurazioni} $(v, q)$ su cui sono
+articolati i risultati nei capitoli seguenti. In codice, la suddivisione delle sorgenti e
+la mappatura chunk\,$\to$\,frame iniziale si riducono a:
+
+\begin{lstlisting}
+sources = sorted(discover_sources())               # SRC001 ... SRC132
+train = [s for s in sources if int(s[3:]) <= 106]  # 80%
+test  = [s for s in sources if int(s[3:]) >  106]  # 20% held-out
+
+nt = field.n_timesteps                             # numero di frame
+spawn_frame = {0: nt//4, 1: nt//2, 2: (nt*3)//4}[chunk_id]   # Q1/4, Q1/2, Q3/4
+\end{lstlisting}
+
+\section{Caricamento e gestione dei dati}
+\label{sec:dataloader}
+
+Il caricamento dei dati grezzi e la loro trasformazione in strutture interrogabili
+dall'ambiente sono gestiti dal modulo software \texttt{data\_loader}, organizzato attorno
+a tre componenti principali.
+
+\paragraph{Campo di concentrazione.}
+Il componente \texttt{NetCDFLoader} legge un file NetCDF e ne costruisce un oggetto
+\texttt{ConcentrationField}, che incapsula i dati di concentrazione $[t, y, x]$ e
+fornisce query spazio-temporali continue. Data una posizione $(x, y)$ e un istante $t$,
+il campo restituisce la concentrazione tramite interpolazione (bilineare nello spazio,
+lineare tra i due frame temporali adiacenti), cos\`i che l'agente non sia vincolato ai
+soli centri-cella della griglia. All'inizializzazione, dalla maschera di terra viene
+inoltre precalcolata --- tramite \emph{Euclidean Distance Transform} (EDT) --- una mappa
+delle distanze dalla costa, usata sia per i vincoli di spawn sia per la penalit\`a di
+prossimit\`a alla terra. In pratica, caricamento e interrogazione del campo si riducono a:
+
+\begin{lstlisting}
+field = NetCDFLoader(data_dir).load("CL02_V2_SRC042_Conc_10mGrid.nc")
+field.set_time(t_idx)                 # seleziona il frame temporale corrente
+c = field.get_concentration(x, y)     # concentrazione interpolata nel punto (x, y)
+\end{lstlisting}
+
+\paragraph{Campi di vento e corrente.}
+In modo analogo, \texttt{WindData} e \texttt{CurrentData} incapsulano rispettivamente la
+serie temporale di vento e il campo vettoriale di corrente, esponendo le componenti
+$(u, v)$ in funzione del tempo (e della posizione, per la corrente). La sincronizzazione
+temporale con il campo di concentrazione \`e mantenuta in minuti simulati.
+
+\paragraph{Gestione centralizzata.}
+Il componente \texttt{DataManager} coordina l'accesso ai dati: alla creazione
+\emph{scopre automaticamente} le sorgenti disponibili dai file presenti, e su richiesta
+fornisce all'ambiente il campo di concentrazione di una data coppia (sorgente, scenario)
+insieme ai relativi vento e corrente. Per evitare di diventare un collo di bottiglia di
+I/O durante l'addestramento --- che richiede milioni di passi e quindi continue
+riletture --- il \texttt{DataManager} mantiene in memoria una \emph{cache} dei quattro
+scenari di vento e corrente, eliminando gli accessi al disco dopo il primo caricamento.
+Una singola chiamata restituisce il campo di concentrazione e le forzanti coerenti:
+
+\begin{lstlisting}
+# Campo di una coppia (sorgente, scenario) + forzanti della STESSA versione
+field, run_id = data_manager.get_random_field_for_source_version("SRC042", "V2")
+wind    = data_manager.get_wind_data_for_run(run_id, wind_mapping)       # da cache
+current = data_manager.get_current_data_for_run(run_id, current_mapping) # da cache
+\end{lstlisting}
+
+\subsection{Sincronizzazione dei dati}
+\label{sec:sync}
+
+Affinch\'e l'agente percepisca un ambiente fisicamente coerente, i tre flussi di dati
+--- concentrazione, vento e corrente --- devono essere allineati. Il \texttt{DataManager}
+garantisce due livelli di sincronizzazione.
+
+\paragraph{Sincronizzazione di versione.}
+La versione dello scenario di vento (V0--V3) \`e codificata nel nome di ogni file (es.\
+\texttt{CL02\_V2\_SRC042\_Conc\_10mGrid.nc}). Al momento di fornire un campo, il
+\texttt{DataManager} estrae la versione dal nome del file di concentrazione e seleziona i
+corrispondenti campi di vento e corrente della \emph{stessa} versione. In questo modo \`e
+impossibile un accoppiamento errato tra concentrazione e forzanti: il plume \`e sempre
+associato al vento e alla corrente che lo hanno effettivamente generato.
+
+\paragraph{Sincronizzazione temporale.}
+I tre flussi hanno cadenze di campionamento native diverse: il campo di concentrazione
+MIKE21 \`e prodotto con un \emph{frame} ogni $\Delta t_c = 2\,\text{min}$, mentre vento e
+corrente seguono le rispettive serie, ciascuna con il proprio passo ($\Delta t_w$ per il
+vento, $\Delta t_u$ per la corrente). Se questi flussi non fossero allineati, l'agente
+percepirebbe un plume che avanza a una velocit\`a incoerente con il vento e la corrente che
+lo trasportano. L'ambiente li riconduce perci\`o a un unico \textbf{asse temporale
+assoluto}, espresso in \emph{minuti simulati}.
+
+\medskip\noindent\emph{Istante assoluto.} Ad ogni passo, dallo step corrente si ricava
+l'istante assoluto dell'episodio come somma dell'offset del chunk di partenza e del tempo
+trascorso:
+\begin{equation}
+  t_{\text{abs}}(k) = \underbrace{f_0 \cdot \Delta t_c}_{\text{offset del chunk}}
+  \;+\; \underbrace{k \cdot \Delta t / 60}_{\text{tempo trascorso}}
+  \qquad [\text{min}],
+  \label{eq:tabs}
+\end{equation}
+dove $k$ \`e il numero di step compiuti, $\Delta t = 10\,\text{s}$ il passo dell'agente e
+$f_0$ il \emph{frame} di spawn del chunk (Sezione~\ref{sec:split}). \`E essenziale che
+l'offset del chunk compaia in $t_{\text{abs}}$: cos\`i, quando l'episodio parte da Q3/4, non
+solo il plume ma anche il vento e la corrente sono presi al punto \emph{corrispondente} del
+loro profilo temporale --- l'agente incontra lo stato idrodinamico effettivamente
+contemporaneo a quello stadio di dispersione, non quello dell'inizio simulazione.
+
+\medskip\noindent\emph{Query per flusso e interpolazione.} L'istante $t_{\text{abs}}$ viene
+poi convertito nell'indice, in generale \emph{frazionario}, proprio di ciascun flusso; il
+valore restituito \`e l'\textbf{interpolazione lineare} tra i due campioni adiacenti:
+\begin{itemize}[leftmargin=1.4em, itemsep=2pt]
+  \item \textbf{concentrazione}: l'indice di frame \`e
+        $f = f_0 + (t_{\text{abs}} - f_0\,\Delta t_c)/\Delta t_c$; detta $\alpha$ la sua parte
+        frazionaria, il campo restituito \`e la miscela
+        $(1-\alpha)\,C_{t_0} + \alpha\,C_{t_1}$ tra i frame adiacenti $t_0=\lfloor f\rfloor$ e
+        $t_1=t_0+1$ --- interpolazione temporale che si somma a quella bilineare nello spazio
+        (Sezione~\ref{sec:dataloader});
+  \item \textbf{vento e corrente}: l'indice \`e $t_{\text{abs}}/\Delta t_{w,u}$, con analoga
+        miscela lineare tra i campioni delle rispettive serie.
+\end{itemize}
+
+\medskip\noindent\emph{Cadenza.} Poich\'e
+$\Delta t_c / \Delta t = 2\,\text{min} / 10\,\text{s} = 12$, il campo di concentrazione
+avanza di un frame \textbf{ogni 12 step} dell'agente; nei passi intermedi l'agente non vede
+un fotogramma ``congelato'' ma una versione \emph{interpolata} del campo. Ad esempio, dopo
+$11$ minuti dallo spawn ($k = 66$) l'indice di frame vale $f_0 + 5{,}5$: il campo restituito
+\`e la media al $50\%$ fra il frame $f_0{+}5$ e il frame $f_0{+}6$
+(Figura~\ref{fig:timeline}).
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[font=\footnotesize, x=2.7cm]
+  \draw[-{Latex[length=2mm]}] (-0.15,0) -- (4.55,0) node[right]{$t$ [min]};
+  % frame di concentrazione (tick alti)
+  \foreach \x/\lab in {0/$f_0$, 2/$f_0{+}5$, 4/$f_0{+}6$}{
+    \draw[thick] (\x,-0.12) -- (\x,0.36);
+    \node[above, font=\scriptsize] at (\x,0.34) {\lab};
+  }
+  \node[below, font=\scriptsize] at (2,-0.12){$10$}; \node[below, font=\scriptsize] at (4,-0.12){$12$};
+  % step dell'agente (tick corti tra frame f0+5 e f0+6)
+  \foreach \i in {1,...,11}{ \draw[gray] ({2+\i/6},-0.06) -- ({2+\i/6},0.06); }
+  % query a t=11 min (indice f0+5.5)
+  \draw[densely dashed, red!70!black] (3,-0.16) -- (3,0.62);
+  \node[red!70!black, above, font=\scriptsize, align=center] at (3,0.6){$k{=}66$\\($11$\,min)};
+  \draw[{Latex[length=1.5mm]}-{Latex[length=1.5mm]}, blue!55!black] (2,0.18) -- (3,0.18)
+       node[midway, above, font=\scriptsize]{$\alpha$};
+  \draw[{Latex[length=1.5mm]}-{Latex[length=1.5mm]}, blue!55!black] (3,0.18) -- (4,0.18)
+       node[midway, above, font=\scriptsize]{$1-\alpha$};
+  \node[align=center, font=\scriptsize, gray!50!black] at (3,-0.62)
+       {$12$ step dell'agente ($\Delta t{=}10$\,s) per ogni frame ($\Delta t_c{=}2$\,min)};
+\end{tikzpicture}
+\caption{Sincronizzazione temporale della concentrazione. Tra due frame consecutivi
+         ($f_0{+}5$ a $10\,\text{min}$, $f_0{+}6$ a $12\,\text{min}$) l'agente compie 12 step;
+         allo step $k{=}66$ ($11\,\text{min}$) il campo \`e la miscela lineare
+         $(1-\alpha)C_{f_0+5} + \alpha C_{f_0+6}$ con $\alpha = 0{,}5$. Vento e corrente sono
+         interpolati in modo analogo sulle rispettive serie.}
+\label{fig:timeline}
+\end{figure}
+
+\medskip\noindent\emph{Gestione dei bordi.} Un episodio dura al pi\`u $1080$ step
+($= 180\,\text{min}$); partendo da un chunk avanzato, $t_{\text{abs}}$ pu\`o oltrepassare la
+fine di una serie. In tal caso l'indice viene \textbf{saturato} all'ultimo campione
+disponibile (con un avviso una tantum per il vento), cos\`i che l'episodio resti sempre ben
+definito anche quando ``sopravvive'' ai dati. In codice, l'aggiornamento dei tre flussi ad
+ogni step si riduce a:
+
+\begin{lstlisting}
+dt_c  = 2.0                                       # min per frame di concentrazione
+t_abs = f0 * dt_c + step * dt / 60.0              # istante assoluto in minuti simulati
+field.set_time(f0 + (step * dt / 60.0) / dt_c)    # frame float -> interp. temporale lineare
+wind.set_time_from_minutes(t_abs)                 # indice = t_abs / dt_wind  (clamp agli estremi)
+current.set_time_from_minutes(t_abs)              # indice = t_abs / dt_curr  (clamp agli estremi)
+\end{lstlisting}

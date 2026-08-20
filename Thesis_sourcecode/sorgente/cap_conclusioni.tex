@@ -1,0 +1,179 @@
+\chapter{Conclusioni}
+\label{cap:concl}
+
+Questa tesi ha affrontato il problema del \emph{source seeking} marino --- la
+localizzazione autonoma della sorgente di un inquinante a partire dalle letture locali
+di concentrazione --- confrontando due famiglie di approcci nell'ambito del progetto
+HYDRAS, su un dataset di simulazioni idrodinamiche realistiche della baia di Cecina.
+
+\section{Risultati principali}
+
+Ripercorriamo il cammino della tesi dall'inizio alla fine, raccogliendone i risultati
+salienti.
+
+\paragraph{Il problema e i dati.}
+Il punto di partenza \`e un problema concreto: localizzare in modo autonomo la sorgente di
+uno sversamento inquinante dalle sole letture locali di concentrazione, in un ambiente
+costiero dove la dispersione \`e governata da una dinamica complessa di correnti, vento e
+turbolenza. Nell'ambito del progetto HYDRAS, il compito \`e stato affrontato su un dataset
+di simulazioni idrodinamiche ad alta risoluzione (MIKE21) della baia di Cecina
+(Capitolo~\ref{cap:dati}), forzate dai dati meteo-oceanografici di CMEMS ed ERA5: 132
+sorgenti equispaziate, ciascuna simulata sotto quattro scenari di vento (V0--V3) che
+generano plume dalle morfologie marcatamente diverse. Per una valutazione rigorosa, 26
+sorgenti (SRC107--132) sono state riservate alla sola inferenza --- mai viste in
+addestramento --- e ogni simulazione \`e stata suddivisa in tre finestre temporali,
+definendo il protocollo \emph{held-out} su cui entrambi gli approcci sono stati misurati a
+parit\`a di condizioni.
+
+\paragraph{L'ambiente condiviso.}
+Su questi dati \`e stato costruito un unico ambiente di simulazione
+(Capitolo~\ref{cap:ambiente}), condiviso dai due approcci: una squadra \emph{master--slave}
+in cui un agente master decide il movimento e otto slave, disposti in corona lungo le
+direzioni cardinali e diagonali, campionano la concentrazione e gliela riportano. L'ambiente
+definisce lo spazio d'azione discreto, l'\emph{action masking} che impedisce le collisioni
+con la costa, la procedura di inizializzazione sul plume e un segnale di reward. Far operare
+i due metodi sullo stesso ambiente --- stessa dinamica, stessi vincoli, stesse osservazioni
+--- \`e ci\`o che rende il confronto pulito: l'unica variabile \`e il modulo che, ricevuta
+l'osservazione, sceglie l'azione.
+
+\paragraph{Il metodo del gradiente.}
+Il primo modulo \`e il \textbf{Field Climbing Method} (Capitolo~\ref{cap:fcm}), la baseline
+gradient-based. Nella versione a passo fisso raggiunge un success rate globale di appena il
+\textbf{32{,}9\%}, limitato dalla sua natura puramente reattiva. L'introduzione
+dell'ottimizzatore \textbf{Adam} per il calcolo del passo --- con momentum sul gradiente
+stimato e normalizzazione per la varianza storica --- lo porta fino al \textbf{63{,}5\%}
+($lr = 40\,\text{m}$), con un guadagno di oltre trenta punti: il momentum smorza le
+oscillazioni dovute al rumore del sensore. Il passo ottimale non \`e per\`o il pi\`u ampio
+--- oltre i $40\,\text{m}$ falcate troppo lunghe scavalcano la struttura del plume --- e i
+valori pi\`u performanti implicano velocit\`a superiori a quella nominale del veicolo. Al di
+l\`a di questi affinamenti, il limite resta \emph{strutturale}: negli scenari a plume diffuso
+il gradiente locale degenera e il metodo, privo di memoria e di contesto, si blocca.
+
+\paragraph{L'apprendimento per rinforzo.}
+Il secondo modulo \`e un agente addestrato con \textbf{PPO} (Capitolo~\ref{cap:rl}). Uno
+studio di ablation sulla funzione di reward ha mostrato che la variante pi\`u semplice
+(\texttt{minimal}), basata sul solo gradiente chimico come segnale direzionale, ottiene il
+success rate pi\`u alto (\textbf{96{,}9\%}): i reward di allineamento a vento e corrente si
+sono rivelati addirittura controproducenti, perch\'e fondati sull'ipotesi --- non valida in
+ambiente costiero --- di una sorgente sempre controvento. Rendere poi la \textbf{velocit\`a
+una scelta dell'agente} (spazio $\text{Discrete}(8\times5)$, addestrato a catena alzando
+progressivamente $v_{\max}$) ha portato il success rate al \textbf{$99{,}7$--$99{,}9\%$} e
+ridotto di oltre quattro volte il tempo al successo (da $\sim$20 a $\sim$5 minuti simulati).
+Su questa catena, la \textbf{doppia corona} di sensori si \`e rivelata un vantaggio netto a
+partire da $v_{\max} = 2\,\text{m/s}$ --- stessa affidabilit\`a e $25$--$34\%$ di passi in
+meno --- correggendo la lettura di un primo confronto in cui, addestrata da zero, sembrava
+dannosa. Approfondimenti mirati hanno infine mostrato che l'agente sa \emph{manovrare}
+finemente attorno alla sorgente (test a raggio di successo ridotto) e che l'esito di un
+episodio \textbf{non dipende dalla posizione di partenza} (analisi delle \emph{spawn map}),
+ma solo dalle condizioni idrodinamiche dello scenario.
+
+\paragraph{Il confronto.}
+Il confronto diretto \`e netto: il modello RL supera il metodo del gradiente su ogni scenario.
+Poich\'e entrambi dispongono di una versione a velocit\`a variabile, il confronto pi\`u equo
+\`e quello \textbf{a parit\`a di velocit\`a massima}, che neutralizza il vantaggio cinematico
+di un passo pi\`u lungo: a ogni livello di velocit\`a il PPO domina l'FCM di
+\textbf{$36$--$42$ punti} di success rate, con il divario massimo proprio negli scenari a
+plume diffuso, dove il gradiente locale degenera. Esteso all'intero range operativo (da
+$0{,}1$ a $5\,\text{m/s}$), il quadro non cambia: il PPO supera il $98\%$ gi\`a a
+$1{,}2\,\text{m/s}$ e si stabilizza attorno al $99\%$, mentre l'FCM resta confinato attorno al
+$55$--$63\%$ alle velocit\`a operative; l'unico regime in cui il divario si assottiglia \`e
+quello delle velocit\`a pi\`u basse, dove un deficit puramente fisico di propulsione --- il
+veicolo pi\`u lento delle correnti da risalire --- penalizza ogni strategia.
+
+\paragraph{L'interpretazione della politica.}
+Stabilito \emph{che} la politica funziona, il Capitolo~\ref{cap:xai} ne ha indagato il
+\emph{perch\'e}. Tramite ablation causale di gruppo, valori di Shapley esatti e sonde
+comportamentali \`e emerso un ritratto coerente: la politica \textbf{non} \`e un risalitore di
+gradiente locale (muove verso il sensore pi\`u intenso solo il $6\%$ delle volte in pi\`u di
+quanto predica il suo stesso bias direzionale), ma si regge sull'\textbf{integrazione
+temporale} del campo chimico --- la storia della corona di sensori --- unita alla memoria di
+dove si \`e andati. \`E emersa inoltre una divergenza istruttiva fra \emph{ci\`o che la rete
+guarda} e \emph{ci\`o che le serve}: la corrente marina \`e la grandezza pi\`u ``guardata''
+eppure la sua rimozione costa pochissimo, mentre la storia della corona \`e il solo blocco
+davvero insostituibile. Un esperimento di riaddestramento \emph{senza} formazione ne ha
+infine quantificato il valore: la formazione vale circa \textbf{$6{,}4$ punti} di success
+rate, ma \`e in parte sostituibile da una strategia temporale appresa --- l'agente singolo
+riaddestrato resta al $93{,}3\%$, circa trentacinque punti sopra l'FCM che pure dispone
+dell'intera formazione. Ci\`o che separa il successo dal fallimento, in definitiva, non \`e il
+sensore ma la \textbf{strategia appresa}.
+
+\section{Sviluppi futuri}
+
+La direzione di sviluppo pi\`u naturale e ambiziosa \`e il passaggio da un sistema a
+\emph{singolo decisore} a un \textbf{sistema multi-agente cooperativo ``vero''}.
+Nell'architettura master--slave adottata in questa tesi un solo agente (il master) decide
+il movimento, mentre gli otto slave sono sensori passivi in formazione rigida: di fatto il
+problema resta a singolo agente. La visione complessiva del progetto HYDRAS prevede invece
+una squadra di $n$ robot autonomi, ciascuno dotato di una \emph{propria} politica di
+navigazione, che collaborano --- coordinando l'esplorazione, ripartendosi il dominio e
+scambiandosi informazioni --- per localizzare la sorgente pi\`u rapidamente e con maggiore
+robustezza di un sistema centralizzato.
+
+\paragraph{L'algoritmo MAPPO.} Per addestrare una tale squadra, l'estensione naturale del
+PPO impiegato in questa tesi \`e \textbf{MAPPO} (\emph{Multi-Agent PPO})~\citep{mappo}, che
+adatta il PPO al contesto multi-agente cooperativo secondo il paradigma \textbf{CTDE}
+(\emph{Centralized Training, Decentralized Execution}). L'idea di fondo \`e separare ci\`o
+che serve in addestramento da ci\`o che serve in esecuzione:
+\begin{itemize}[leftmargin=1.4em, itemsep=3pt]
+    \item ogni agente possiede una \textbf{politica decentralizzata} (attore)
+          $\pi_\theta(a_i \mid o_i)$ che sceglie l'azione a partire dalla \emph{sola}
+          osservazione locale $o_i$ (le proprie letture di concentrazione, la propria
+          cinematica). In esecuzione, quindi, ogni robot \`e autonomo: naviga senza un
+          coordinatore centrale e senza comunicazione a banda piena;
+    \item in addestramento, un \textbf{critico centralizzato} (\emph{value function})
+          $V_\phi(s)$ riceve informazione \emph{globale} sullo stato congiunto della
+          squadra --- non disponibile ai singoli attori --- e ne stima il valore atteso.
+          \`E questo critico ``onnisciente'' a stabilizzare l'apprendimento: valuta le
+          azioni di ciascun agente tenendo conto di ci\`o che fanno gli altri, mitigando la
+          \emph{non-stazionariet\`a} che affligge gli approcci in cui ogni agente apprende
+          in modo del tutto indipendente (IPPO, \emph{Independent PPO}).
+\end{itemize}
+Il critico viene usato \emph{solo} durante il training e scartato in esecuzione, dove
+sopravvivono le sole politiche locali --- da cui il nome CTDE. La scelta di cosa fornire in
+ingresso al critico \`e un punto delicato: gli autori mostrano che uno stato
+\emph{agent-specific} (lo stato globale dell'ambiente concatenato all'osservazione locale
+dell'agente, con le feature ridondanti rimosse) rende meglio sia della semplice
+concatenazione di tutte le osservazioni sia del solo stato globale dell'ambiente.
+
+Sul piano meccanico MAPPO conserva l'impianto del PPO di questa tesi --- obiettivo
+\emph{clipped}, stima del vantaggio con GAE, normalizzazione del vantaggio --- applicato
+per-agente, con due accorgimenti che si rivelano decisivi. Il primo \`e la
+\textbf{condivisione dei parametri} tra agenti omogenei: attori e critici usano gli stessi
+pesi per tutti i robot, il che moltiplica i dati utili e migliora l'efficienza campionaria
+quando i veicoli sono identici. Il secondo \`e la \textbf{normalizzazione del value target}
+tramite media e deviazione standard correnti, che evita l'instabilit\`a quando i ritorni
+variano molto tra episodi. Gli autori raccomandano inoltre poche epoche PPO per
+aggiornamento (5--15, meno nei task difficili) e al pi\`u due mini-batch, per contenere la
+deriva delle politiche fra un update e l'altro. Il risultato principale del loro lavoro \`e
+che, \textbf{all'aumentare del numero di agenti}, il vantaggio del critico centralizzato di
+MAPPO cresce nettamente rispetto agli approcci indipendenti: \`e proprio nei regimi a molti
+agenti --- quelli di interesse per una squadra numerosa di robot marini --- che l'algoritmo
+d\`a il meglio.
+
+\paragraph{Adattamento al source seeking.} Calato nel nostro dominio, ciascun agente
+sarebbe un veicolo autonomo con la propria corona di sensori; il critico centralizzato, in
+addestramento, potrebbe accedere alle posizioni e alle letture dell'\emph{intera} squadra
+(e, in simulazione, all'intero campo MIKE21), mentre in mare ogni veicolo naviga sulla sola
+informazione locale e su una comunicazione sparsa con i vicini. Rispetto al master--slave
+qui adottato, ci\`o trasformerebbe gli slave da sensori passivi in decisori attivi, aprendo
+a strategie di copertura e di ripartizione del dominio precluse a un singolo agente ---
+esattamente l'architettura \emph{multi-agente distribuita} che costituisce l'obiettivo di
+lungo periodo del progetto HYDRAS.
+
+\medskip
+Restano infine aperte altre direzioni complementari:
+\begin{itemize}
+    \item \textbf{Validazione su veicolo reale}: trasferire la politica appresa in
+          simulazione a un AUV fisico, affrontando il \emph{sim-to-real gap} dovuto al
+          rumore reale dei sensori e alla dinamica del veicolo;
+    \item \textbf{Generalizzazione geografica}: addestrare e validare gli agenti su
+          domini marini diversi dalla baia di Cecina, per valutare la trasferibilit\`a
+          delle strategie apprese;
+    \item \textbf{Architetture ricorrenti}: sostituire la policy MLP con reti dotate di
+          memoria esplicita (LSTM, Transformer) per modellare in modo pi\`u ricco la
+          dinamica temporale del plume.
+\end{itemize}
+
+I risultati ottenuti confermano il potenziale del Reinforcement Learning come strumento
+per la navigazione autonoma in ambienti marini complessi, e quantificano il contributo
+dell'apprendimento rispetto agli approcci gradient-based classici.
