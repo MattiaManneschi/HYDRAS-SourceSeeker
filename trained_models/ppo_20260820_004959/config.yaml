@@ -1,0 +1,110 @@
+agent:
+  action_type: discrete
+  mask_formation: true
+  max_velocity: 1.9
+  memory_length: 9
+  n_discrete_actions: 8
+  n_velocity_levels: 5
+  sensor_range: 20
+curriculum:
+  enabled: false
+  phases:
+  - description: 'Fine-tuning: 106 sources x 4 scenarios = 424 files (1.5M steps)'
+    end: 1500000
+    num_sources: 106
+    start: 0
+data:
+  concentration_var: Concentration - component 1
+  fill_value: 0.0
+  interpolation: linear
+  nc_pattern: CMEMS_*_conc_grid_10m.nc
+  time_var: time
+  x_var: x
+  y_var: y
+domain:
+  grid_resolution: 10
+  nx: 300
+  ny: 250
+  xmax: 622000
+  xmin: 619000
+  ymax: 4797000
+  ymin: 4794500
+environment:
+  dt: 10
+  max_episode_steps: 1080
+  normalize_obs: true
+  normalize_reward: false
+  reward:
+    boundary_penalty: -10.0
+    concentration_gradient_reward_negative: -0.05
+    concentration_gradient_reward_positive: 0.05
+    current_alignment_penalty: -0.05
+    current_alignment_reward: 0.05
+    directional_stagnation_penalty: -0.5
+    directional_stagnation_threshold: 0.15
+    distance_reward_multiplier: 100.0
+    distance_threshold: 50
+    land_proximity_penalty_max: -15.0
+    land_proximity_threshold: 30.0
+    retreat_penalty_multiplier: 3.0
+    reward_mode: base_no_wind_reward
+    source_reached_bonus: 100.0
+    stagnation_distance_threshold: 20.0
+    stagnation_penalty: -1.5
+    stagnation_window: 15
+    step_penalty: -0.1
+    wind_alignment_penalty: -0.05
+    wind_alignment_reward: 0.05
+  spawn:
+    conc_threshold: 0.5
+    min_land_distance: 50
+    start_frame: 352
+sources:
+  concentration: 1000
+  flow_rate: 50
+training:
+  algorithm: PPO
+  batch_size: 128
+  chunk_ids:
+  - 0
+  - 1
+  - 2
+  clip_range: 0.15
+  ent_coef: 0.01
+  eval_freq: 100000
+  eval_scenarios: []
+  gae_lambda: 0.95
+  gamma: 0.99
+  learning_rate: 0.0001
+  max_grad_norm: 0.5
+  n_epochs: 10
+  n_eval_episodes: 3
+  n_steps: 4096
+  n_targeted_per_chunk: 2
+  policy: MlpPolicy
+  policy_kwargs:
+    activation_fn: tanh
+    net_arch:
+      pi:
+      - 256
+      - 256
+      vf:
+      - 256
+      - 256
+  progress_bar: true
+  resume_from: null
+  save_freq: 100000
+  scenario_curriculum:
+  - alpha: 0.8
+    end: 1500000
+  scenario_weights: null
+  sensor_range_sweep: []
+  target_kl: 0.02
+  targeted_chunk_ids:
+  - 1
+  - 2
+  targeted_versions: []
+  tensorboard_log: ./logs/tensorboard
+  total_timesteps: 6000000
+  verbose: 1
+  vf_coef: 0.3
