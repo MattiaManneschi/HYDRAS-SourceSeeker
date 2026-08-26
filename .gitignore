@@ -1,10 +1,20 @@
-# Data files (NetCDF) - raw data stays local
+# ── Dati grezzi (NetCDF): restano in locale ──────────────────────────────────
 data/
 
-template_latex_mem/
-thesis/
+# ── Modelli addestrati: fuori dal repo, distribuiti via GitHub Release ───────
+trained_models/
 
-# Python cache
+# ── Working dir della tesi + archivio: solo locali ───────────────────────────
+thesis_workspace/
+.archive/
+template_latex_mem/
+
+# ── Valutazioni: si tracciano SOLO i plot di analisi + i JSON "lean". ────────
+#    I plot per-episodio (SRCxxx/) e i JSON completi restano in locale.
+evaluations/**/SRC*/
+evaluations/**/episodes_data.json
+
+# ── Python cache ─────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
@@ -17,38 +27,31 @@ build/
 .mypy_cache/
 *.egg
 
-# Virtual environment
+# ── Ambiente virtuale / IDE ──────────────────────────────────────────────────
 .venv/
 venv/
 .idea/
-*.pth
-*.h5
-.DS_Store
-
-# IDE
 .vscode/
 .claude/
 *.swp
 *.swo
+.DS_Store
+*.pth
+*.h5
 
-# Training logs and tensorboard - keep models and evaluations
+# ── Log di training / tensorboard ────────────────────────────────────────────
 **/logs/
 **/tensorboard/
 
-# Jupyter notebooks
+# ── Notebook ─────────────────────────────────────────────────────────────────
 .ipynb_checkpoints/
 *.ipynb
 
-# Large model checkpoints (keep only final models for repo)
-trained_models/**/checkpoints/
-evaluations/
-extra_noformation/
-
-# LaTeX auxiliary files
+# ── File ausiliari LaTeX ─────────────────────────────────────────────────────
 *.aux
-*.log
 *.out
 *.toc
 *.synctex.gz
 *.fls
 *.fdb_latexmk
+*.log
