@@ -1294,7 +1294,7 @@ def main_fcm_adam_sweep():
         print(f"\n{'='*80}")
         print(f"FCM Adam sweep — lr={lr}m")
         print(f"{'='*80}")
-        output_dir = str(PROJECT_ROOT / "thesis" / "evaluations" / "evaluations_FCM"
+        output_dir = str(PROJECT_ROOT / "evaluations" / "evaluations_FCM"
                          / "fcm_adaptive" / f"lr_{lr}")
         run_inference_fcm(
             config_path=CONFIG_PATH, data_dir=DATA_DIR, output_dir=output_dir,
@@ -1555,7 +1555,7 @@ def main():
                 print(f"[SKIP] Nessun modello trovato per sensor_range={sr}m in {trained_dir}")
                 continue
 
-            output_dir = str(PROJECT_ROOT / "thesis" / "evaluations" / "evaluations_RL" / f"evaluations_v{BASE_VERSION + i}")
+            output_dir = str(PROJECT_ROOT / "evaluations" / "evaluations_RL" / f"evaluations_v{BASE_VERSION + i}")
 
             cfg_override = load_config(CONFIG_PATH)
             cfg_override['agent']['sensor_range'] = sr
@@ -1605,7 +1605,7 @@ def main():
             cfg_override['agent']['sensor_range_2'] = sr2
             print(f"sensor_range dal modello: {sr}m  |  sensor_range_2: {sr2}m")
 
-        output_dir = str(PROJECT_ROOT / "thesis" / "evaluations" / "evaluations_RL" / "evaluations_v13")
+        output_dir = str(PROJECT_ROOT / "evaluations" / "evaluations_RL" / "evaluations_v13")
 
         print(f"Modello selezionato: {model_path}")
         print(f"Output valutazioni: {output_dir}")
@@ -1649,7 +1649,7 @@ def main_spawn_map(mode: str = 'ppo'):
 
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
     DATA_DIR     = str(PROJECT_ROOT / "data")
-    SPAWN_ROOT   = PROJECT_ROOT / "thesis" / "evaluations" / "spawn_maps"
+    SPAWN_ROOT   = PROJECT_ROOT / "evaluations" / "spawn_maps"
     chunk_labels = {0: 'Q1/4', 1: 'Q1/2', 2: 'Q3/4'}
 
     data_manager = DataManager(data_dir=DATA_DIR, preload_all=False,
@@ -1691,7 +1691,7 @@ def main_spawn_map(mode: str = 'ppo'):
     inference_sources = [s for s in data_manager.get_discovered_sources() if int(s[3:]) > 106]
 
     # ── 1. Combinazioni con SR < 100% dai dati esistenti ──────────────────────
-    eval_path = (PROJECT_ROOT / "thesis" / "evaluations" / "evaluations_RL"
+    eval_path = (PROJECT_ROOT / "evaluations" / "evaluations_RL"
                  / "evaluations_minimal_reward" / "episodes_data.json")
     eps_data = _json.loads(eval_path.read_text())
 
@@ -1958,13 +1958,13 @@ def main_velocity_inference(vmax_list=(1, 2, 3, 4, 5)):
     corrispondente), e l'ambiente è ricostruito dal config.yaml salvato nel run
     (n_velocity_levels, max_velocity, sensori, spawn).
 
-    Output: thesis/evaluations/evaluations_RL/evaluations_RL_adaptive/vmax_{v}/
+    Output: evaluations/evaluations_RL/evaluations_RL_adaptive/vmax_{v}/
     (v_max float → es. vmax_1.2, che NON sovrascrive vmax_1 della catena intera).
     """
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
     DATA_DIR     = str(PROJECT_ROOT / "data")
     trained_dir  = PROJECT_ROOT / "trained_models"
-    out_root     = (PROJECT_ROOT / "thesis" / "evaluations"
+    out_root     = (PROJECT_ROOT / "evaluations"
                     / "evaluations_RL" / "evaluations_RL_adaptive")
     out_root.mkdir(parents=True, exist_ok=True)
 
@@ -2055,7 +2055,7 @@ def main_radius10_inference():
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
     DATA_DIR     = str(PROJECT_ROOT / "data")
     trained_dir  = PROJECT_ROOT / "trained_models"
-    out = (PROJECT_ROOT / "thesis" / "evaluations"
+    out = (PROJECT_ROOT / "evaluations"
            / "evaluations_RL" / "evaluations_RL_adaptive" / "r10")
 
     run_dir = _find_radius10_run(trained_dir)
@@ -2116,7 +2116,7 @@ def main_dualcorona_inference(vmax: int = 1):
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
     DATA_DIR     = str(PROJECT_ROOT / "data")
     trained_dir  = PROJECT_ROOT / "trained_models"
-    out = (PROJECT_ROOT / "thesis" / "evaluations"
+    out = (PROJECT_ROOT / "evaluations"
            / "evaluations_RL" / "evaluations_RL_adaptive" / f"dualcorona_v{vmax}")
 
     run_dir = _find_dualcorona_run(trained_dir, vmax=vmax)
@@ -2154,7 +2154,7 @@ def _dualcorona_step_table(vmax_list):
     """Stampa la tabella riassuntiva doppia vs singola corona: SR e step medi al successo
     per ogni v_max, con il guadagno percentuale di step (obiettivo dello sweep opzione 2)."""
     import json as _json
-    base = (Path(__file__).resolve().parent.parent / "thesis" / "evaluations"
+    base = (Path(__file__).resolve().parent.parent / "evaluations"
             / "evaluations_RL" / "evaluations_RL_adaptive")
 
     def _stats(p: Path):
@@ -2218,7 +2218,7 @@ def main_agent_heatmap(scenarios=None, n_episodes: int = 10,
     (istogramma fine + smoothing gaussiano) e disegna 3 pannelli affiancati (mare/costa/
     sorgente + heatmap) su SCALA COMUNE, fissata sui due modelli PPO; l'FCM, che oscilla a
     lungo negli stessi punti, ha picchi più alti e satura.
-    Output: thesis/evaluations/agent_heatmaps/heatmap_<i>_<src>_<ver>_Q<chunk>.png
+    Output: evaluations/agent_heatmaps/heatmap_<i>_<src>_<ver>_Q<chunk>.png
     """
     import copy
     from scipy.ndimage import gaussian_filter
@@ -2227,7 +2227,7 @@ def main_agent_heatmap(scenarios=None, n_episodes: int = 10,
 
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
     DATA_DIR = str(PROJECT_ROOT / "data")
-    OUT = PROJECT_ROOT / "thesis" / "evaluations" / "agent_heatmaps"
+    OUT = PROJECT_ROOT / "evaluations" / "agent_heatmaps"
     OUT.mkdir(parents=True, exist_ok=True)
     if scenarios is None:   # default: 5 scenari difficili (V1/V2 × Q1/2,Q3/4)
         scenarios = [('SRC114', 'V2', 2), ('SRC120', 'V2', 1), ('SRC117', 'V2', 2),

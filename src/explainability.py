@@ -980,7 +980,7 @@ def main() -> None:
         sys.exit(1)
 
     out_dir = Path(args.out) if args.out else (
-        root / "thesis" / "evaluations" / "evaluations_RL" / "evaluations_RL_adaptive"
+        root / "evaluations" / "evaluations_RL" / "evaluations_RL_adaptive"
         / f"explainability_dualcorona_v{int(args.vmax)}")
     out_dir.mkdir(parents=True, exist_ok=True)
 

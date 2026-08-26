@@ -4,7 +4,7 @@ e SENZA generazione video (più rapido; i video si fanno eventualmente dopo):
 
   1) Sweep FCM Adam     — learning rate (passo) crescente: lr ∈ {10,20,30,40,50} m,
                           sensor_range = 50 m (ottimale FCM).
-                          Output: thesis/evaluations/evaluations_FCM/fcm_adaptive/lr_{lr}/
+                          Output: evaluations/evaluations_FCM/fcm_adaptive/lr_{lr}/
 
   2) Sweep PPO velocità adattiva — v_max ∈ {1,2,3,4,5} m/s, K=5 livelli (Discrete(8*5)=40):
                           l'agente sceglie la velocità in (0, v_max] ad ogni passo.
@@ -79,7 +79,7 @@ def _read_sr(output_dir) -> float:
 # ─── 1) Sweep FCM Adam ────────────────────────────────────────────────────────
 
 def fcm_sweep(lrs=None):
-    out_root = ROOT / "thesis" / "evaluations" / "evaluations_FCM" / "fcm_adaptive"
+    out_root = ROOT / "evaluations" / "evaluations_FCM" / "fcm_adaptive"
     lrs = lrs if lrs is not None else [10, 20, 30, 40, 50]
     results = []
     for i, lr in enumerate(lrs, 1):
