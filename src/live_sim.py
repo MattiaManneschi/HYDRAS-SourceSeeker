@@ -104,9 +104,20 @@ VERSIONS = ["V0", "V1", "V2", "V3"]
 FCM_LR = 40.0            # miglior configurazione dello sweep (Cap. 3)
 FCM_SENSOR_RANGE = 50.0
 
+# Modelli confrontabili in gruppo: (key, etichetta GUI, colore traiettoria).
+# I colori coincidono con quelli dei plot/video del progetto.
+MODEL_DEFS = [
+    ("fcm",    "FCM",             "#7f7f7f"),
+    ("noform", "PPO no ring",     "#2ca02c"),
+    ("single", "PPO single ring", "#1f5fb4"),
+    ("double", "PPO double ring", "#e07b28"),
+]
+MODEL_COLOR = {k: c for k, _, c in MODEL_DEFS}
+MODEL_LABEL = {k: lab for k, lab, _ in MODEL_DEFS}
+DEFAULT_MODELS = ("fcm", "single", "double")   # selezione iniziale (no-ring escluso: solo v_max<=2)
+
 # Default dei menu a tendina (ripristinati a fine episodio).
-DEFAULTS = {"tech": "PPO", "version": "V0", "chunk": "Q1/4",
-            "vmax": "2", "formation": "Double"}
+DEFAULTS = {"version": "V0", "chunk": "Q1/4", "vmax": "1.2"}
 
 
 # ─── Requisiti / dati / modelli / script: check e download ───────────────────
@@ -442,6 +453,95 @@ def make_agent_env(dm: DataManager, root_dir: Path, tech: str, version: str,
     return model, vec_env, False, label
 
 
+def _find_noform_run(trained, vmax, K: int = 5):
+    """Run del modello PPO 'no ring' (central-agent-only, mask_formation) per il v_max.
+    Criterio: K livelli, max_velocity==vmax, corona singola (no sensor_range_2),
+    mask_formation=True. Ritorna un Path o None (i no-ring esistono solo per v_max<=2)."""
+    best = None
+    for d in sorted(Path(trained).glob("ppo_*")):
+        cfg_p = d / "config.yaml"
+        if not cfg_p.exists() or not (d / "models" / "final_model.zip").exists():
+            continue
+        try:
+            ag = load_config(str(cfg_p)).get("agent", {})
+        except Exception:
+            continue
+        if (int(ag.get("n_velocity_levels", 1)) == K
+                and abs(float(ag.get("max_velocity", 1.0)) - float(vmax)) < 1e-6
+                and ag.get("sensor_range_2") is None
+                and bool(ag.get("mask_formation", False))):
+            best = d
+    return best
+
+
+def _build_one(kind: str, dm, root_dir: Path, version: str, chunk: int, vmax: float, field):
+    """Costruisce (agent, vec_env, is_fcm, label) per UN modello su un campo dato.
+    Ritorna None se il modello non è disponibile per il v_max scelto (es. no-ring a v_max>2)."""
+    if kind == "fcm":
+        config = load_config(str(root_dir / "utils" / "config" / "config_base_no_wind_reward.yaml"))
+        env_cfg = make_env_config(config, chunk_id=chunk)
+        env_cfg.sensor_range = FCM_SENSOR_RANGE
+        vec_env = build_env_fcm(env_cfg, field, use_masking=MASKABLE_PPO_AVAILABLE,
+                                data_manager=dm, wind_mapping=WIND_MAPPING,
+                                current_mapping=CURRENT_MAPPING)
+        lr = max(1.0, round(float(vmax) * 10.0))          # passo FCM (m) ≈ v_max*10
+        agent = AdamFCMAgent(sensor_range=FCM_SENSOR_RANGE, lr=lr)
+        agent.reset()
+        return agent, vec_env, True, f"FCM (lr={int(lr)} m)"
+
+    trained = root_dir / "trained_models"
+    if kind == "single":
+        run_dir = _find_velocity_run(trained, vmax=float(vmax), K=5)
+    elif kind == "double":
+        run_dir = _find_dualcorona_run(trained, vmax=float(vmax), K=5)
+    elif kind == "noform":
+        run_dir = _find_noform_run(trained, vmax=float(vmax), K=5)
+    else:
+        return None
+    if run_dir is None:
+        return None
+    model_path = run_dir / "models" / "final_model.zip"
+    vn = run_dir / "models" / "vec_normalize.pkl"
+    if not model_path.exists():
+        return None
+    config = load_config(str(run_dir / "config.yaml"))
+    env_cfg = make_env_config(config, chunk_id=chunk)
+    vec_env = build_env(env_cfg, field, vn, use_masking=MASKABLE_PPO_AVAILABLE,
+                        data_manager=dm, wind_data=None, current_data=None,
+                        wind_mapping=WIND_MAPPING, current_mapping=CURRENT_MAPPING)
+    model = load_model(str(model_path))
+    return model, vec_env, False, MODEL_LABEL[kind]
+
+
+def make_agents(dm, root_dir: Path, kinds, version: str, chunk: int, vmax: float, source: str):
+    """Costruisce gli agenti selezionati sullo STESSO scenario, con START COMUNE.
+    Il primo modello disponibile fa lo spawn naturale; gli altri sono forzati sullo
+    stesso punto (monkeypatch di _spawn_on_plume). Ritorna (agents, unavailable)."""
+    import copy as _copy
+    base_field = load_field(dm, source, version)
+    if base_field is None:
+        raise RuntimeError(f"Campo non caricabile per {source} {version}.")
+    agents, unavailable, common_start = [], [], None
+    for kind in kinds:
+        built = _build_one(kind, dm, root_dir, version, chunk, vmax, _copy.deepcopy(base_field))
+        if built is None:
+            unavailable.append(kind)
+            continue
+        agent, vec_env, is_fcm, label = built
+        inner = get_inner_env(vec_env)
+        if common_start is None:
+            obs = vec_env.reset()                          # spawn naturale = start comune
+            common_start = (float(inner.state.x), float(inner.state.y))
+        else:
+            inner._spawn_on_plume = lambda s=common_start: (s[0], s[1])
+            obs = vec_env.reset()
+        agents.append(dict(kind=kind, agent=agent, vec_env=vec_env, is_fcm=is_fcm,
+                           color=MODEL_COLOR[kind], label=label, obs=obs,
+                           done=False, steps=0, term=None,
+                           traj=[(float(inner.state.x), float(inner.state.y))]))
+    return agents, unavailable
+
+
 def step_once(agent, vec_env, obs, is_fcm) -> Tuple[np.ndarray, bool, dict]:
     """Un passo: predice, (FCM: aggiorna la velocità adattiva), avanza.
 
@@ -614,6 +714,80 @@ def draw_scene(ax, inner, title: str) -> None:
               edgecolor=DARK_MUTED, labelcolor=DARK_FG)
 
 
+def draw_scene_multi(ax, agents: list, title: str) -> None:
+    """Come draw_scene ma con PIÙ agenti sovrapposti: campo dal frame più avanzato
+    (fra gli agenti ancora in corsa), poi ogni agente con la sua scia+pallino colorati
+    (una X quando ha finito). Start comune e sorgente. Stesso stile canonico."""
+    ax.clear()
+    running = [a for a in agents if not a["done"]]
+    ref = max(running or agents, key=lambda a: a["steps"])
+    rinner = get_inner_env(ref["vec_env"])
+    field = rinner.field
+    conc = field.get_current_field()
+    xc, yc = field.x_coords, field.y_coords
+    dx = float(xc[1] - xc[0]) if len(xc) > 1 else 10.0
+    dy = float(yc[1] - yc[0]) if len(yc) > 1 else 10.0
+    extent = [float(xc[0]) - dx / 2, float(xc[-1]) + dx / 2,
+              float(yc[0]) - dy / 2, float(yc[-1]) + dy / 2]
+
+    ax.set_facecolor("#87CEEB")
+    land_mask = getattr(field, "land_mask", None)
+    if land_mask is not None:
+        land = np.ma.masked_where(~land_mask, np.ones_like(conc))
+        ax.imshow(land, origin="lower", extent=extent,
+                  cmap=ListedColormap(["#FFFFFF"]), alpha=1.0, zorder=1)
+        plume_mask = land_mask | (conc < 0.01)
+    else:
+        plume_mask = conc < 0.01
+    ax.imshow(np.ma.masked_where(plume_mask, conc), origin="lower", extent=extent,
+              cmap="YlOrRd", alpha=0.9, vmin=0, vmax=max(float(conc.max()), 0.1), zorder=2)
+
+    start = agents[0]["traj"][0]
+    ax.scatter(start[0], start[1], c="white", s=80, marker="o", edgecolors="black",
+               linewidths=1.2, zorder=6, label="Start")
+    sx, sy = rinner.source_position
+    ax.scatter(sx, sy, c="yellow", s=220, marker="*", edgecolors="black", zorder=8, label="Source")
+    ax.add_patch(Circle((sx, sy), rinner.config.source_distance_threshold,
+                        fill=False, color="red", linestyle="--", zorder=7))
+
+    dt = float(getattr(rinner.config, "dt", 10.0))
+    for idx, a in enumerate(agents):
+        tr = np.array(a["traj"])
+        suffix = f"— {a['term'].upper()} ({a['steps']})" if (a["done"] and a["term"]) \
+                 else f"— {a['steps']} steps"
+        ax.plot(tr[:, 0], tr[:, 1], "-", color=a["color"], linewidth=1.8, alpha=0.9,
+                zorder=4, label=f"{a['label']} {suffix}")
+        ax.scatter(tr[-1, 0], tr[-1, 1], color=a["color"], s=90,
+                   marker=("X" if a["done"] else "o"), edgecolors="white",
+                   linewidths=1.0, zorder=6)
+        # Freccia di direzione + velocità del passo corrente (solo agenti in corsa).
+        if not a["done"] and len(tr) >= 2:
+            dxp, dyp = float(tr[-1, 0] - tr[-2, 0]), float(tr[-1, 1] - tr[-2, 1])
+            seg = (dxp * dxp + dyp * dyp) ** 0.5
+            if seg > 1e-9:
+                vx, vy = dxp / dt, dyp / dt          # m/s (coerente con inner.state.v)
+                ax.arrow(tr[-1, 0], tr[-1, 1], vx * 50, vy * 50, head_width=30,
+                         head_length=20, fc=a["color"], ec=a["color"], zorder=5,
+                         length_includes_head=True)
+                ax.annotate(f"{seg / dt:.2f} m/s", (tr[-1, 0], tr[-1, 1]),
+                            textcoords="offset points", xytext=(11, 8 + (idx - 1.5) * 13),
+                            fontsize=8, fontweight="bold", color=a["color"],
+                            bbox=dict(boxstyle="round,pad=0.15", fc="white",
+                                      ec=a["color"], alpha=0.85), zorder=8)
+
+    ax.set_xlabel("X (m)", color=DARK_FG)
+    ax.set_ylabel("Y (m)", color=DARK_FG)
+    ax.set_title(title, color=DARK_FG)
+    ax.tick_params(colors=DARK_MUTED)
+    for _sp in ax.spines.values():
+        _sp.set_color(DARK_MUTED)
+    ax.set_aspect("equal")
+    ax.set_xlim(float(xc[0]), float(xc[-1]))
+    ax.set_ylim(float(yc[0]), float(yc[-1]))
+    ax.legend(loc="upper right", fontsize=8, facecolor=DARK_PANEL,
+              edgecolor=DARK_MUTED, labelcolor=DARK_FG)
+
+
 # ─── GUI ─────────────────────────────────────────────────────────────────────
 
 def build_gui(root, dm, fps: float = 15.0) -> None:
@@ -639,11 +813,11 @@ def build_gui(root, dm, fps: float = 15.0) -> None:
     ctrl.grid(row=0, column=0, sticky="ew", padx=14, pady=(14, 8))
     ctrl.columnconfigure(5, weight=1)     # spacer: spinge i bottoni a destra
 
-    tech_var = tk.StringVar(value=DEFAULTS["tech"])
     ver_var = tk.StringVar(value=DEFAULTS["version"])
     chunk_var = tk.StringVar(value=DEFAULTS["chunk"])
     vmax_var = tk.StringVar(value=DEFAULTS["vmax"])
-    form_var = tk.StringVar(value=DEFAULTS["formation"])
+    # Un checkbox per modello: l'utente sceglie un GRUPPO di modelli da confrontare.
+    model_vars = {k: tk.BooleanVar(value=(k in DEFAULT_MODELS)) for k, _, _ in MODEL_DEFS}
 
     def field(col, label, var, values):
         """Un campo = etichetta minuscola in alto + menu a tendina sotto, come celle
@@ -656,22 +830,27 @@ def build_gui(root, dm, fps: float = 15.0) -> None:
         cb.pack(anchor="w", pady=(4, 0))
         return cell, cb
 
-    # v_max selezionabili: singola e doppia corona coprono ora l'intero range
-    # (basse 0.1/0.4/0.7, intermedie 1.2–1.9 e interi 1–5).
-    SPEEDS_SINGLE = ["0.1", "0.4", "0.7", "1", "1.2", "1.5", "1.7", "1.9", "2", "3", "4", "5"]
-    SPEEDS_DOUBLE = ["0.1", "0.4", "0.7", "1", "1.2", "1.5", "1.7", "1.9", "2", "3", "4", "5"]
+    # v_max coperti: singola/doppia 0.1–5; FCM = passo v_max*10; no-ring solo <=2.
+    SPEEDS = ["0.1", "0.4", "0.7", "1", "1.2", "1.5", "1.7", "1.9", "2", "3", "4", "5"]
 
-    tech_cell, tech_cb = field(0, "Technology", tech_var, ["PPO", "FCM"])
+    # Cella MODELS: 4 checkbox (2x2), etichette col colore della rispettiva traiettoria.
+    models_cell = ttk.Frame(ctrl, style="Card.TFrame")
+    models_cell.grid(row=0, column=0, padx=(0, 26), sticky="w")
+    ttk.Label(models_cell, text="MODELS", style="Field.TLabel").grid(
+        row=0, column=0, columnspan=2, sticky="w")
+    model_checks = []
+    for i, (k, lab, color) in enumerate(MODEL_DEFS):
+        chk = tk.Checkbutton(models_cell, text=lab, variable=model_vars[k],
+                             onvalue=True, offvalue=False, bg=DARK_PANEL, fg=color,
+                             selectcolor=DARK_FIELD, activebackground=DARK_PANEL,
+                             activeforeground=color, highlightthickness=0, bd=0,
+                             font=("", 10), anchor="w")
+        chk.grid(row=1 + i // 2, column=i % 2, sticky="w", padx=(0, 12), pady=(2, 0))
+        model_checks.append(chk)
+
     ver_cell, ver_cb = field(1, "Wind", ver_var, VERSIONS)
     chunk_cell, chunk_cb = field(2, "Time Chunk", chunk_var, list(CHUNK_BY_LABEL.keys()))
-    vmax_cell, vmax_cb = field(3, "Max Speed", vmax_var, SPEEDS_SINGLE)
-    form_cell, form_cb = field(4, "Formation", form_var, ["Single", "Double"])
-
-    # FCM: il "learning rate" (passo di Adam, in metri) è il corrispettivo del v_max
-    # del PPO. Compare solo con Technology == FCM, nella stessa cella di Max Speed.
-    FCM_LRS = ["1", "4", "7", "10", "12", "15", "17", "19", "20", "30", "40", "50"]
-    lr_var = tk.StringVar(value=str(int(FCM_LR)))
-    lr_cell, lr_cb = field(3, "Step (lr, m)", lr_var, FCM_LRS)
+    vmax_cell, vmax_cb = field(3, "Max Speed", vmax_var, SPEEDS)
 
     # Centro: la simulazione live occupa la maggior parte della finestra. Il canvas
     # viene messo in griglia solo a caricamento completato (finalize_loading);
@@ -708,101 +887,90 @@ def build_gui(root, dm, fps: float = 15.0) -> None:
                        style="Muted.TLabel", padding=(16, 6))
     status.grid(row=2, column=0, sticky="w")
 
-    # Campi dipendenti dalla tecnologia: PPO → Max Speed + Formation; FCM → Step (lr).
-    # vmax_cell e lr_cell condividono la colonna 3 (mutuamente esclusivi).
-    def sync_tech_fields(*_):
-        if tech_var.get() == "PPO":
-            lr_cell.grid_remove()
-            vmax_cell.grid(); form_cell.grid()
-        else:
-            vmax_cell.grid_remove(); form_cell.grid_remove()
-            lr_cell.grid()
-
-    tech_cb.bind("<<ComboboxSelected>>", sync_tech_fields)
-    sync_tech_fields()     # init: default PPO → nasconde il campo lr (stessa cella)
-
-    def sync_speed_options(*_):
-        """Adatta i valori di Max Speed alla formazione. Singola e doppia corona
-        coprono lo stesso range completo (0.1–5); se il valore corrente non è
-        valido per la formazione scelta, ripristina il default."""
-        vals = SPEEDS_SINGLE if form_var.get() == "Single" else SPEEDS_DOUBLE
-        vmax_cb.configure(values=vals)
-        if vmax_var.get() not in vals:
-            vmax_var.set(DEFAULTS["vmax"])
-
-    form_cb.bind("<<ComboboxSelected>>", sync_speed_options)
-    sync_speed_options()
-
-    state = {"vec_env": None, "obs": None, "agent": None, "is_fcm": False,
-             "label": "", "running": False, "steps": 0, "dm": dm}
+    state = {"agents": [], "running": False, "steps": 0, "dm": dm,
+             "load_token": None, "scenario": ""}
 
     def set_controls(enabled: bool):
         st = "readonly" if enabled else "disabled"
-        for cb in (tech_cb, ver_cb, chunk_cb, vmax_cb, form_cb, lr_cb):
+        for cb in (ver_cb, chunk_cb, vmax_cb):
             cb.configure(state=st)
+        for chk in model_checks:
+            chk.configure(state=("normal" if enabled else "disabled"))
         start_btn.configure(state=("normal" if enabled else "disabled"))
 
     def cleanup_env():
-        if state["vec_env"] is not None:
+        for a in state.get("agents", []):
             try:
-                state["vec_env"].close()
+                a["vec_env"].close()
             except Exception:
                 pass
-            state["vec_env"] = None
+        state["agents"] = []
 
     def reset_program():
-        """Ripristina tutte le configurazioni ai default e riabilita i controlli."""
+        """Ripristina le configurazioni ai default e riabilita i controlli."""
         cleanup_env()
-        state.update(running=False, obs=None, agent=None, steps=0, load_token=None)
-        tech_var.set(DEFAULTS["tech"]); ver_var.set(DEFAULTS["version"])
-        chunk_var.set(DEFAULTS["chunk"]); vmax_var.set(DEFAULTS["vmax"])
-        form_var.set(DEFAULTS["formation"]); lr_var.set(str(int(FCM_LR)))
-        sync_tech_fields()
-        sync_speed_options()
+        state.update(running=False, steps=0, load_token=None)
+        for k, _, _ in MODEL_DEFS:
+            model_vars[k].set(k in DEFAULT_MODELS)
+        ver_var.set(DEFAULTS["version"]); chunk_var.set(DEFAULTS["chunk"])
+        vmax_var.set(DEFAULTS["vmax"])
         set_controls(True)
 
-    def finish(info: dict):
-        outcome = resolve_termination(info)
-        inner = get_inner_env(state["vec_env"])
-        draw_scene(ax, inner, f"{state['label']}  —  {outcome.upper()} "
-                              f"in {state['steps']} step")
+    def finish():
+        gstep = max((a["steps"] for a in state["agents"]), default=0)
+        draw_scene_multi(ax, state["agents"],
+                         f"{state['scenario']}  —  finished ({gstep} steps)")
         canvas.draw_idle()
-        # Fine naturale: MANTIENE le configurazioni scelte (non le resetta); chiude
-        # solo l'ambiente e riabilita i controlli, lasciando l'ultimo frame a schermo.
+        outcomes = "   ".join(
+            f"{MODEL_LABEL[a['kind']]}: {(a['term'] or 'timeout').upper()} ({a['steps']})"
+            for a in state["agents"])
+        # Fine naturale: MANTIENE le configurazioni scelte; chiude gli ambienti e
+        # riabilita i controlli, lasciando l'ultimo frame a schermo.
         cleanup_env()
-        state.update(running=False, obs=None, agent=None, steps=0)
+        state.update(running=False, steps=0)
         set_controls(True)
-        status.configure(text=f"Episode finished: {outcome.upper()}. "
-                              f"Settings kept — press Start to run again.")
+        status.configure(text=f"Finished — {outcomes}. Settings kept — press Start to run again.")
 
     def step():
         if not state["running"]:
             return
-        try:
-            obs, done, info = step_once(state["agent"], state["vec_env"],
-                                        state["obs"], state["is_fcm"])
-        except Exception as e:
-            status.configure(text=f"Error during the simulation: {e}")
-            reset_program()
-            return
-        state["obs"] = obs
-        state["steps"] += 1
-        inner = get_inner_env(state["vec_env"])
-        draw_scene(ax, inner, f"{state['label']}  —  step {state['steps']}")
+        any_running = False
+        for a in state["agents"]:
+            if a["done"]:
+                continue
+            try:
+                obs, done, info = step_once(a["agent"], a["vec_env"], a["obs"], a["is_fcm"])
+            except Exception as e:
+                status.configure(text=f"Error during the simulation: {e}")
+                reset_program()
+                return
+            a["obs"] = obs
+            a["steps"] += 1
+            pos = info.get("position")            # posizione dell'info (valida anche a done)
+            if pos is not None:
+                a["traj"].append((float(pos[0]), float(pos[1])))
+            if done:
+                a["done"] = True
+                a["term"] = resolve_termination(info)
+            else:
+                any_running = True
+        gstep = max((a["steps"] for a in state["agents"]), default=0)
+        draw_scene_multi(ax, state["agents"], f"{state['scenario']}  —  step {gstep}")
         canvas.draw_idle()
-        if done:
-            state["running"] = False
-            finish(info)
-        else:
+        if any_running:
             root.after(delay_ms, step)
+        else:
+            state["running"] = False
+            finish()
 
     def start():
-        tech = tech_var.get()
+        kinds = [k for k, _, _ in MODEL_DEFS if model_vars[k].get()]
+        if not kinds:
+            status.configure(text="Select at least one model.")
+            return
         version = ver_var.get()
         chunk = CHUNK_BY_LABEL[chunk_var.get()]
         vmax = float(vmax_var.get())
-        formation = form_var.get()
-        fcm_lr = float(lr_var.get())
 
         source = pick_source(state["dm"], version, rng)
         if source is None:
@@ -810,21 +978,18 @@ def build_gui(root, dm, fps: float = 15.0) -> None:
             return
 
         set_controls(False)
-        status.configure(text=f"Loading {tech} … scenario {source} {version} "
-                              f"{chunk_var.get()}")
+        status.configure(text=f"Loading {len(kinds)} model(s) … scenario {source} "
+                              f"{version} {chunk_var.get()}")
 
-        # Caricamento modello/ambiente in un THREAD di sfondo: così il click sul
-        # bottone ha feedback immediato e la GUI non si "congela" durante il load
-        # (make_agent_env non tocca Tk/matplotlib → sicuro fuori dal thread GUI).
+        # Caricamento in un THREAD di sfondo (make_agents non tocca Tk/matplotlib).
         token = object()
         state["load_token"] = token             # invalidato da Cancel/reset
         result = {}
 
         def _load():
             try:
-                result["value"] = make_agent_env(
-                    state["dm"], root_dir, tech, version, chunk, vmax, formation,
-                    source, fcm_lr=fcm_lr)
+                result["value"] = make_agents(state["dm"], root_dir, kinds,
+                                              version, chunk, vmax, source)
             except Exception as e:              # marshallato nel poll (thread GUI)
                 result["error"] = e
 
@@ -832,10 +997,11 @@ def build_gui(root, dm, fps: float = 15.0) -> None:
             if state.get("load_token") is not token:   # Cancel/nuovo Start nel frattempo
                 v = result.get("value")
                 if v is not None:
-                    try:
-                        v[1].close()
-                    except Exception:
-                        pass
+                    for a in v[0]:
+                        try:
+                            a["vec_env"].close()
+                        except Exception:
+                            pass
                 return
             if "error" in result:
                 status.configure(text=f"Loading error: {result['error']}")
@@ -844,12 +1010,17 @@ def build_gui(root, dm, fps: float = 15.0) -> None:
             if "value" not in result:
                 root.after(50, _await_load)     # ancora in caricamento
                 return
-            agent, vec_env, is_fcm, label = result["value"]
-            state.update(vec_env=vec_env, agent=agent, is_fcm=is_fcm,
-                         label=f"{label} · {source} {version} {chunk_var.get()}",
-                         steps=0, running=True)
-            state["obs"] = vec_env.reset()
-            status.configure(text=f"Running: {state['label']}")
+            agents, unavailable = result["value"]
+            if not agents:
+                status.configure(text=f"None of the selected models is available "
+                                      f"for max speed {vmax:g}.")
+                set_controls(True)
+                return
+            state.update(agents=agents, running=True, steps=0,
+                         scenario=f"{source} {version} {chunk_var.get()}")
+            note = ("   ·   n/a @v_max: " + ", ".join(MODEL_LABEL[k] for k in unavailable)) \
+                if unavailable else ""
+            status.configure(text=f"Running {len(agents)} model(s): {state['scenario']}{note}")
             root.after(delay_ms, step)
 
         threading.Thread(target=_load, daemon=True).start()
@@ -873,7 +1044,6 @@ def build_gui(root, dm, fps: float = 15.0) -> None:
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_close)
-    sync_tech_fields()
 
     # GUI pronta: mostra il canvas, abilita i controlli, schermata inerte.
     canvas.get_tk_widget().grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 6))
