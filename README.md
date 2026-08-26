@@ -12,8 +12,8 @@ simulations of the Cecina bay.
    **`launcher.bat`** (Windows) — and place it in a folder with at least ~8 GB free.
 2. Double-click it. On first launch it downloads everything it needs (code, data,
    models) into that same folder, then opens the interface.
-3. Configure the scenario and the agent with the drop-down menus (see below), then
-   press **Start** to watch one episode play out in real time.
+3. Tick one or more **models** to compare and set the scenario (see below), then
+   press **Start** to watch them run together, in real time, on the same scenario.
 
 ### Requirements
 
@@ -33,15 +33,31 @@ package it needs by itself (via `pip`). Specifically:
 `curl`/`wget` (macOS) or `curl`/PowerShell (Windows), used for the very first
 download, are already bundled in recent macOS and Windows 10/11.
 
-### Scenario configuration
+### What to choose
 
-| Menu | Options | Meaning |
+Pick **one or more models** to compare — they run together on the same scenario,
+from a common start, each drawn in its own colour — plus the scenario:
+
+| Control | Options | Meaning |
 |---|---|---|
-| **Technology** | PPO · FCM Adam | Which algorithm drives the agent: the learned PPO policy or the gradient method (FCM with Adam). |
+| **Models** (checkboxes) | FCM · PPO no ring · PPO single ring · PPO double ring | Which agents to show. Any subset runs simultaneously. |
 | **Wind** | V0 · V1 · V2 · V3 | Wind scenario (four hydrodynamic runs with different wind conditions). |
 | **Time Chunk** | Q1/4 · Q1/2 · Q3/4 | When in the simulation the episode starts — first quarter, middle, or third quarter (plume more or less dispersed). |
-| **Max Speed** | 0.1–5 m/s | Agent's maximum speed (single and double ring cover the full range). *(PPO only.)* |
-| **Formation** | Single · Double ring | Single sensor ring (20 m) or double ring (20 m + 50 m). *(PPO only.)* |
+| **Max Speed** | 0.1–5 m/s | Agents' maximum speed. The FCM step is derived from it; the *no ring* model exists only up to 2 m/s (skipped above). |
 
-Once **Wind** and **Time Chunk** are set, a random source is picked for
-that scenario. Each run shows a single episode; press **Start** again for a new one.
+Once **Wind** and **Time Chunk** are set, a random source is picked for that
+scenario. Press **Start** again for a new scenario.
+
+## Repository structure
+
+- `src/` — training (`train_ppo`, `run_adaptive_sweeps`), evaluation/inference
+  (`inference`, `explainability`) and the live app (`live_sim`).
+- `utils/` — environment, data loading, and video generation (`video_generator`,
+  with a standalone CLI: `python utils/video_generator.py batch all`).
+- `thesis/` — thesis deliverables: LaTeX source (`.zip`), the three PDF/A files
+  (thesis, abstract, index) and all report PDFs (`reports/`).
+- `deliverables/` — figures, tables and the comparison videos (`videos/v0|v1|v2/`).
+- `evaluations/` — held-out **analysis plots** and **lean** result files
+  (`episodes_data_lean.json`); per-episode plots and full JSONs stay local.
+- `data/`, `trained_models/` — large assets kept out of git (fetched by the
+  launcher / distributed via GitHub Release).
