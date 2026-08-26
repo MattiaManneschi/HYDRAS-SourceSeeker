@@ -1,0 +1,78 @@
+Wind data loaded: CI_WIND_faseII_V1.txt (48 timesteps)
+Current data loaded: CL02_V1_SRC000_U_V_10mGrid.nc (1411 timesteps)
+
+====================================================================================================
+HYDRAS Inference — 26 sorgenti (SRC107-SRC132, 20% held-out) × 2 chunk × 5 episodi
+  = 260 episodi totali
+Modello: /Users/mattiamanneschi/PycharmProjects/HYDRAS-Project/trained_models/ppo_20260329_173707/models/final_model.zip
+Dati: /Users/mattiamanneschi/PycharmProjects/HYDRAS-Project/data/Output_HD_FaseII_CL2_V1
+Sorgenti training curriculum: SRC001-SRC106 (106 sorgenti, 80%)
+Sorgenti inference (held-out 20%): 26: ['SRC107', 'SRC108', 'SRC109', 'SRC110', 'SRC111', 'SRC112', 'SRC113', 'SRC114', 'SRC115', 'SRC116', 'SRC117', 'SRC118', 'SRC119', 'SRC120', 'SRC121', 'SRC122', 'SRC123', 'SRC124', 'SRC125', 'SRC126', 'SRC127', 'SRC128', 'SRC129', 'SRC130', 'SRC131', 'SRC132']
+====================================================================================================
+
+Wind data: 48 timesteps
+Current data: 1411 timesteps
+[  1/26] SRC107 Q1/4   success
+[  1/26] SRC107 Q3/4   failed
+[  2/26] SRC108 Q1/4   success
+[  2/26] SRC108 Q3/4   failed
+[  3/26] SRC109 Q1/4   success
+[  3/26] SRC109 Q3/4   failed
+[  4/26] SRC110 Q1/4   success
+[  4/26] SRC110 Q3/4   success
+[  5/26] SRC111 Q1/4   success
+[  5/26] SRC111 Q3/4   success
+[  6/26] SRC112 Q1/4   success
+[  6/26] SRC112 Q3/4   failed
+[  7/26] SRC113 Q1/4   success
+[  7/26] SRC113 Q3/4   success
+[  8/26] SRC114 Q1/4   success
+[  8/26] SRC114 Q3/4   failed
+[  9/26] SRC115 Q1/4   success
+[  9/26] SRC115 Q3/4   failed
+
+[Progress: 10/26 sources]
+
+[ 10/26] SRC116 Q1/4   success
+[ 10/26] SRC116 Q3/4   success
+[ 11/26] SRC117 Q1/4   success
+[ 11/26] SRC117 Q3/4   success
+[ 12/26] SRC118 Q1/4   success
+[ 12/26] SRC118 Q3/4   failed
+[ 13/26] SRC119 Q1/4   success
+[ 13/26] SRC119 Q3/4   success
+[ 14/26] SRC120 Q1/4   success
+[ 14/26] SRC120 Q3/4   success
+[ 15/26] SRC121 Q1/4   success
+[ 15/26] SRC121 Q3/4   success
+[ 16/26] SRC122 Q1/4   success
+[ 16/26] SRC122 Q3/4   success
+[ 17/26] SRC123 Q1/4   success
+[ 17/26] SRC123 Q3/4   success
+[ 18/26] SRC124 Q1/4   success
+[ 18/26] SRC124 Q3/4   failed
+[ 19/26] SRC125 Q1/4   success
+[ 19/26] SRC125 Q3/4   success
+
+[Progress: 20/26 sources]
+
+[ 20/26] SRC126 Q1/4   success
+[ 20/26] SRC126 Q3/4   success
+[ 21/26] SRC127 Q1/4   success
+[ 21/26] SRC127 Q3/4   success
+[ 22/26] SRC128 Q1/4   success
+[ 22/26] SRC128 Q3/4   success
+[ 23/26] SRC129 Q1/4   success
+[ 23/26] SRC129 Q3/4   success
+[ 24/26] SRC130 Q1/4   success
+[ 24/26] SRC130 Q3/4   success
+[ 25/26] SRC131 Q1/4   success
+[ 25/26] SRC131 Q3/4   success
+[ 26/26] SRC132 Q1/4   success
+[ 26/26] SRC132 Q3/4   success
+
+============================================================
+Final Success Rate: 88.5%
+Mean Steps (success): 73 (~12.1 min)
+Mean Initial Distance: 490m
+============================================================

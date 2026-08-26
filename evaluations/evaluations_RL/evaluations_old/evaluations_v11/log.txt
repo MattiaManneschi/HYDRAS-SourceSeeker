@@ -1,0 +1,22 @@
+HYDRAS Inference Summary
+Generated at: 2026-05-08 12:04:18
+Model: /Users/mattiamanneschi/PycharmProjects/HYDRAS-Project/trained_models/ppo_20260508_044426/models/final_model.zip
+
+Metrics:
+- Global Success Rate: 51.2%
+- Mean Initial Distance: 802.8 m
+- Mean Success Steps: 124.0 (~20.7 min)
+
+Success Rate by Wind:
+- V0: 46.4%
+- V1: 44.9%
+- V2: 38.7%
+- V3: 74.6%
+
+Success Rate by Frame:
+- Q1/4: 48.5%
+- Q1/2: 39.0%
+- Q3/4: 66.0%
+
+Total Scenarios Evaluated: 312
+Total Episodes Evaluated: 1560

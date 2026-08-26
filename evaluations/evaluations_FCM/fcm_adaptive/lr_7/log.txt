@@ -1,0 +1,22 @@
+HYDRAS Inference Summary
+Generated at: 2026-08-06 16:51:06
+Model: FCM Adam (lr=7.0m, sensor_range=50.0m)
+
+Metrics:
+- Global Success Rate: 54.0%
+- Mean Initial Distance: 690.5 m
+- Mean Success Steps: 192.9 (~32.1 min)
+
+Success Rate by Wind:
+- V0: 75.0%
+- V1: 28.2%
+- V2: 35.3%
+- V3: 77.6%
+
+Success Rate by Frame:
+- Q1/4: 75.5%
+- Q1/2: 32.2%
+- Q3/4: 54.3%
+
+Total Scenarios Evaluated: 312
+Total Episodes Evaluated: 624

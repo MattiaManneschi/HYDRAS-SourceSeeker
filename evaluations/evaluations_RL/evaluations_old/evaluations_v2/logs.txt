@@ -1,0 +1,242 @@
+======================================================================
+HYDRAS Inference — 12 scenari × 2 chunk × 5 episodi
+  = 120 episodi totali (12 fisici, 24 virtuali)
+Modello: /Users/mattiamanneschi/PycharmProjects/HYDRAS-Project/trained_models/ppo_20260322_113620/models/final_model.zip
+======================================================================
+
+
+[S1_01 — spawn @Q1/4]
+  Ep 1/5: ✓ [success ] init=589m  final=93m  steps=54
+  Ep 2/5: ✓ [success ] init=818m  final=99m  steps=78
+  Ep 3/5: ✓ [success ] init=1231m  final=94m  steps=129
+  Ep 4/5: ✓ [success ] init=730m  final=99m  steps=69
+  Ep 5/5: ✓ [success ] init=772m  final=95m  steps=72
+  S1_01_Q1/4  SR=100%   dist=96m (min=93m, max=99m)  steps_success=80  [success=5]
+
+[S1_01 — spawn @Q3/4]
+  Ep 1/5: ✓ [success ] init=545m  final=96m  steps=49
+  Ep 2/5: ✓ [success ] init=579m  final=94m  steps=51
+  Ep 3/5: ✓ [success ] init=803m  final=99m  steps=74
+  Ep 4/5: ✓ [success ] init=540m  final=92m  steps=48
+  Ep 5/5: ✓ [success ] init=835m  final=94m  steps=78
+  S1_01_Q3/4  SR=100%   dist=95m (min=92m, max=99m)  steps_success=60  [success=5]
+
+[S1_02 — spawn @Q1/4]
+  Ep 1/5: ✓ [success ] init=714m  final=98m  steps=67
+  Ep 2/5: ✓ [success ] init=948m  final=98m  steps=91
+  Ep 3/5: ✗ [timeout ] init=1245m  final=2341m  steps=1080
+  Ep 4/5: ✓ [success ] init=746m  final=99m  steps=71
+  Ep 5/5: ✗ [timeout ] init=1148m  final=2103m  steps=1080
+  S1_02_Q1/4  SR=60%    dist=948m (min=98m, max=2341m)  steps_success=76  [success=3, timeout=2]
+
+[S1_02 — spawn @Q3/4]
+  Ep 1/5: ✓ [success ] init=751m  final=98m  steps=89
+  Ep 2/5: ✓ [success ] init=1160m  final=96m  steps=136
+  Ep 3/5: ✓ [success ] init=1189m  final=93m  steps=119
+  Ep 4/5: ✓ [success ] init=1234m  final=96m  steps=123
+  Ep 5/5: ✓ [success ] init=1267m  final=97m  steps=152
+  S1_02_Q3/4  SR=100%   dist=96m (min=93m, max=98m)  steps_success=124  [success=5]
+
+[S1_03 — spawn @Q1/4]
+  Ep 1/5: ✓ [success ] init=528m  final=97m  steps=68
+  Ep 2/5: ✓ [success ] init=961m  final=94m  steps=136
+  Ep 3/5: ✓ [success ] init=1483m  final=95m  steps=186
+  Ep 4/5: ✓ [success ] init=665m  final=93m  steps=78
+  Ep 5/5: ✗ [timeout ] init=785m  final=1343m  steps=1080
+  S1_03_Q1/4  SR=80%    dist=344m (min=93m, max=1343m)  steps_success=117  [success=4, timeout=1]
+
+[S1_03 — spawn @Q3/4]
+  Ep 1/5: ✓ [success ] init=1232m  final=96m  steps=161
+  Ep 2/5: ✓ [success ] init=1079m  final=94m  steps=341
+  Ep 3/5: ✓ [success ] init=731m  final=95m  steps=85
+  Ep 4/5: ✓ [success ] init=1006m  final=96m  steps=130
+  Ep 5/5: ✓ [success ] init=1202m  final=95m  steps=162
+  S1_03_Q3/4  SR=100%   dist=95m (min=94m, max=96m)  steps_success=176  [success=5]
+
+[S1_04 — spawn @Q1/4]
+  Ep 1/5: ✓ [success ] init=1036m  final=100m  steps=132
+  Ep 2/5: ✓ [success ] init=1208m  final=92m  steps=154
+  Ep 3/5: ✓ [success ] init=890m  final=96m  steps=102
+  Ep 4/5: ✓ [success ] init=1401m  final=91m  steps=175
+  Ep 5/5: ✓ [success ] init=924m  final=96m  steps=110
+  S1_04_Q1/4  SR=100%   dist=95m (min=91m, max=100m)  steps_success=135  [success=5]
+
+[S1_04 — spawn @Q3/4]
+  Ep 1/5: ✓ [success ] init=729m  final=100m  steps=137
+  Ep 2/5: ✓ [success ] init=977m  final=93m  steps=124
+  Ep 3/5: ✓ [success ] init=909m  final=100m  steps=110
+  Ep 4/5: ✓ [success ] init=893m  final=95m  steps=108
+  Ep 5/5: ✓ [success ] init=965m  final=91m  steps=124
+  S1_04_Q3/4  SR=100%   dist=96m (min=91m, max=100m)  steps_success=121  [success=5]
+
+[S2_01 — spawn @Q1/4]
+  Ep 1/5: ✗ [timeout ] init=1207m  final=1959m  steps=1080
+  Ep 2/5: ✓ [success ] init=1186m  final=97m  steps=113
+  Ep 3/5: ✓ [success ] init=554m  final=99m  steps=47
+  Ep 4/5: ✗ [timeout ] init=1052m  final=2016m  steps=1080
+  Ep 5/5: ✓ [success ] init=1064m  final=93m  steps=101
+  S2_01_Q1/4  SR=60%    dist=853m (min=93m, max=2016m)  steps_success=87  [timeout=2, success=3]
+
+[S2_01 — spawn @Q3/4]
+  Ep 1/5: ✗ [timeout ] init=1123m  final=886m  steps=1080
+  Ep 2/5: ✓ [success ] init=717m  final=93m  steps=212
+  Ep 3/5: ✗ [timeout ] init=789m  final=702m  steps=1080
+  Ep 4/5: ✗ [timeout ] init=1092m  final=1019m  steps=1080
+  Ep 5/5: ✓ [success ] init=625m  final=100m  steps=199
+  S2_01_Q3/4  SR=40%    dist=560m (min=93m, max=1019m)  steps_success=206  [timeout=3, success=2]
+
+[S2_02 — spawn @Q1/4]
+  Ep 1/5: ✓ [success ] init=939m  final=97m  steps=86
+  Ep 2/5: ✓ [success ] init=620m  final=91m  steps=55
+  Ep 3/5: ✓ [success ] init=1196m  final=100m  steps=116
+  Ep 4/5: ✓ [success ] init=600m  final=91m  steps=53
+  Ep 5/5: ✓ [success ] init=1000m  final=92m  steps=94
+  S2_02_Q1/4  SR=100%   dist=94m (min=91m, max=100m)  steps_success=81  [success=5]
+
+[S2_02 — spawn @Q3/4]
+  Ep 1/5: ✓ [success ] init=915m  final=93m  steps=86
+  Ep 2/5: ✓ [success ] init=965m  final=92m  steps=90
+  Ep 3/5: ✓ [success ] init=1187m  final=92m  steps=112
+  Ep 4/5: ✓ [success ] init=1153m  final=90m  steps=109
+  Ep 5/5: ✓ [success ] init=944m  final=94m  steps=88
+  S2_02_Q3/4  SR=100%   dist=92m (min=90m, max=94m)  steps_success=97  [success=5]
+
+[S2_03 — spawn @Q1/4]
+  Ep 1/5: ✓ [success ] init=1121m  final=90m  steps=117
+  Ep 2/5: ✓ [success ] init=520m  final=93m  steps=57
+  Ep 3/5: ✓ [success ] init=1115m  final=97m  steps=115
+  Ep 4/5: ✓ [success ] init=1012m  final=98m  steps=103
+  Ep 5/5: ✓ [success ] init=623m  final=93m  steps=57
+  S2_03_Q1/4  SR=100%   dist=94m (min=90m, max=98m)  steps_success=90  [success=5]
+
+[S2_03 — spawn @Q3/4]
+  Ep 1/5: ✓ [success ] init=1034m  final=91m  steps=105
+  Ep 2/5: ✓ [success ] init=757m  final=95m  steps=77
+  Ep 3/5: ✓ [success ] init=704m  final=98m  steps=243
+  Ep 4/5: ✓ [success ] init=1257m  final=98m  steps=138
+  Ep 5/5: ✓ [success ] init=671m  final=99m  steps=87
+  S2_03_Q3/4  SR=100%   dist=96m (min=91m, max=99m)  steps_success=130  [success=5]
+
+[S2_04 — spawn @Q1/4]
+  Ep 1/5: ✗ [timeout ] init=1292m  final=1351m  steps=1080
+  Ep 2/5: ✓ [success ] init=1238m  final=97m  steps=124
+  Ep 3/5: ✓ [success ] init=1017m  final=98m  steps=99
+  Ep 4/5: ✓ [success ] init=816m  final=98m  steps=76
+  Ep 5/5: ✓ [success ] init=935m  final=95m  steps=90
+  S2_04_Q1/4  SR=80%    dist=348m (min=95m, max=1351m)  steps_success=97  [timeout=1, success=4]
+
+[S2_04 — spawn @Q3/4]
+  Ep 1/5: ✓ [success ] init=1138m  final=94m  steps=111
+  Ep 2/5: ✓ [success ] init=763m  final=99m  steps=71
+  Ep 3/5: ✓ [success ] init=607m  final=94m  steps=55
+  Ep 4/5: ✓ [success ] init=553m  final=99m  steps=49
+  Ep 5/5: ✓ [success ] init=1218m  final=93m  steps=123
+  S2_04_Q3/4  SR=100%   dist=96m (min=93m, max=99m)  steps_success=82  [success=5]
+
+[S3_01 — spawn @Q1/4]
+  Ep 1/5: ✓ [success ] init=1111m  final=99m  steps=123
+  Ep 2/5: ✓ [success ] init=821m  final=96m  steps=89
+  Ep 3/5: ✓ [success ] init=1214m  final=99m  steps=138
+  Ep 4/5: ✓ [success ] init=772m  final=95m  steps=86
+  Ep 5/5: ✓ [success ] init=1267m  final=99m  steps=148
+  S3_01_Q1/4  SR=100%   dist=97m (min=95m, max=99m)  steps_success=117  [success=5]
+
+[S3_01 — spawn @Q3/4]
+  Ep 1/5: ✓ [success ] init=605m  final=100m  steps=67
+  Ep 2/5: ✓ [success ] init=595m  final=100m  steps=66
+  Ep 3/5: ✗ [timeout ] init=1289m  final=533m  steps=1080
+  Ep 4/5: ✗ [timeout ] init=1281m  final=500m  steps=1080
+  Ep 5/5: ✓ [success ] init=825m  final=96m  steps=90
+  S3_01_Q3/4  SR=60%    dist=266m (min=96m, max=533m)  steps_success=74  [success=3, timeout=2]
+
+[S3_02 — spawn @Q1/4]
+  Ep 1/5: ✓ [success ] init=818m  final=90m  steps=74
+  Ep 2/5: ✓ [success ] init=687m  final=100m  steps=77
+  Ep 3/5: ✓ [success ] init=776m  final=90m  steps=71
+  Ep 4/5: ✓ [success ] init=835m  final=97m  steps=76
+  Ep 5/5: ✓ [success ] init=530m  final=98m  steps=58
+  S3_02_Q1/4  SR=100%   dist=95m (min=90m, max=100m)  steps_success=71  [success=5]
+
+[S3_02 — spawn @Q3/4]
+  Ep 1/5: ✓ [success ] init=545m  final=95m  steps=65
+  Ep 2/5: ✓ [success ] init=798m  final=95m  steps=96
+  Ep 3/5: ✓ [success ] init=723m  final=94m  steps=95
+  Ep 4/5: ✓ [success ] init=615m  final=97m  steps=79
+  Ep 5/5: ✓ [success ] init=576m  final=96m  steps=63
+  S3_02_Q3/4  SR=100%   dist=96m (min=94m, max=97m)  steps_success=80  [success=5]
+
+[S3_03 — spawn @Q1/4]
+  Ep 1/5: ✓ [success ] init=781m  final=100m  steps=91
+  Ep 2/5: ✓ [success ] init=589m  final=100m  steps=66
+  Ep 3/5: ✓ [success ] init=698m  final=98m  steps=88
+  Ep 4/5: ✓ [success ] init=692m  final=98m  steps=77
+  Ep 5/5: ✓ [success ] init=1000m  final=93m  steps=117
+  S3_03_Q1/4  SR=100%   dist=98m (min=93m, max=100m)  steps_success=88  [success=5]
+
+[S3_03 — spawn @Q3/4]
+  Ep 1/5: ✓ [success ] init=883m  final=97m  steps=107
+  Ep 2/5: ✓ [success ] init=777m  final=92m  steps=95
+  Ep 3/5: ✓ [success ] init=701m  final=96m  steps=93
+  Ep 4/5: ✓ [success ] init=1159m  final=98m  steps=134
+  Ep 5/5: ✓ [success ] init=1295m  final=99m  steps=149
+  S3_03_Q3/4  SR=100%   dist=96m (min=92m, max=99m)  steps_success=116  [success=5]
+
+[S3_04 — spawn @Q1/4]
+  Ep 1/5: ✓ [success ] init=630m  final=99m  steps=67
+  Ep 2/5: ✓ [success ] init=1007m  final=98m  steps=111
+  Ep 3/5: ✓ [success ] init=752m  final=99m  steps=91
+  Ep 4/5: ✓ [success ] init=811m  final=93m  steps=91
+  Ep 5/5: ✓ [success ] init=724m  final=95m  steps=80
+  S3_04_Q1/4  SR=100%   dist=97m (min=93m, max=99m)  steps_success=88  [success=5]
+
+[S3_04 — spawn @Q3/4]
+  Ep 1/5: ✓ [success ] init=917m  final=99m  steps=108
+  Ep 2/5: ✓ [success ] init=624m  final=94m  steps=67
+  Ep 3/5: ✓ [success ] init=955m  final=92m  steps=107
+  Ep 4/5: ✓ [success ] init=1260m  final=93m  steps=138
+  Ep 5/5: ✓ [success ] init=714m  final=91m  steps=80
+  S3_04_Q3/4  SR=100%   dist=94m (min=91m, max=99m)  steps_success=100  [success=5]
+
+======================================================================
+RIEPILOGO PER SORGENTE
+======================================================================
+
+  S1:
+  S1_01_Q1/4  SR=100%   dist=96m (min=93m, max=99m)  steps_success=80  [success=5]
+  S1_01_Q3/4  SR=100%   dist=95m (min=92m, max=99m)  steps_success=60  [success=5]
+  S1_02_Q1/4  SR=60%    dist=948m (min=98m, max=2341m)  steps_success=76  [success=3, timeout=2]
+  S1_02_Q3/4  SR=100%   dist=96m (min=93m, max=98m)  steps_success=124  [success=5]
+  S1_03_Q1/4  SR=80%    dist=344m (min=93m, max=1343m)  steps_success=117  [success=4, timeout=1]
+  S1_03_Q3/4  SR=100%   dist=95m (min=94m, max=96m)  steps_success=176  [success=5]
+  S1_04_Q1/4  SR=100%   dist=95m (min=91m, max=100m)  steps_success=135  [success=5]
+  S1_04_Q3/4  SR=100%   dist=96m (min=91m, max=100m)  steps_success=121  [success=5]
+
+  S1 SUMMARY: SR=92%  mean_dist=233m  mean_steps_success=111
+
+  S2:
+  S2_01_Q1/4  SR=60%    dist=853m (min=93m, max=2016m)  steps_success=87  [timeout=2, success=3]
+  S2_01_Q3/4  SR=40%    dist=560m (min=93m, max=1019m)  steps_success=206  [timeout=3, success=2]
+  S2_02_Q1/4  SR=100%   dist=94m (min=91m, max=100m)  steps_success=81  [success=5]
+  S2_02_Q3/4  SR=100%   dist=92m (min=90m, max=94m)  steps_success=97  [success=5]
+  S2_03_Q1/4  SR=100%   dist=94m (min=90m, max=98m)  steps_success=90  [success=5]
+  S2_03_Q3/4  SR=100%   dist=96m (min=91m, max=99m)  steps_success=130  [success=5]
+  S2_04_Q1/4  SR=80%    dist=348m (min=95m, max=1351m)  steps_success=97  [timeout=1, success=4]
+  S2_04_Q3/4  SR=100%   dist=96m (min=93m, max=99m)  steps_success=82  [success=5]
+
+  S2 SUMMARY: SR=85%  mean_dist=279m  mean_steps_success=109
+
+  S3:
+  S3_01_Q1/4  SR=100%   dist=97m (min=95m, max=99m)  steps_success=117  [success=5]
+  S3_01_Q3/4  SR=60%    dist=266m (min=96m, max=533m)  steps_success=74  [success=3, timeout=2]
+  S3_02_Q1/4  SR=100%   dist=95m (min=90m, max=100m)  steps_success=71  [success=5]
+  S3_02_Q3/4  SR=100%   dist=96m (min=94m, max=97m)  steps_success=80  [success=5]
+  S3_03_Q1/4  SR=100%   dist=98m (min=93m, max=100m)  steps_success=88  [success=5]
+  S3_03_Q3/4  SR=100%   dist=96m (min=92m, max=99m)  steps_success=116  [success=5]
+  S3_04_Q1/4  SR=100%   dist=97m (min=93m, max=99m)  steps_success=88  [success=5]
+  S3_04_Q3/4  SR=100%   dist=94m (min=91m, max=99m)  steps_success=100  [success=5]
+
+  S3 SUMMARY: SR=95%  mean_dist=117m  mean_steps_success=92
+
+======================================================================
+GLOBALE: success_rate=90.8%  mean_final_dist=210m
+======================================================================
