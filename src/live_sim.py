@@ -583,6 +583,8 @@ DARK_FIELD  = "#2a3244"   # sfondo dei menu a tendina
 DARK_FG     = "#e6e9ef"   # testo principale
 DARK_MUTED  = "#95a0b3"   # testo/assi secondari
 DARK_ACCENT = "#3b82f6"   # blu accento (bottoni attivi, barra di caricamento)
+UI_FONT    = ("", 13)     # font base dei controlli (menu in alto)
+UI_FONT_SM = ("", 11)     # etichette piccole sopra i menu
 
 
 def _apply_dark_theme(root) -> None:
@@ -597,12 +599,12 @@ def _apply_dark_theme(root) -> None:
         pass
     style.configure(".", background=DARK_BG, foreground=DARK_FG,
                     fieldbackground=DARK_FIELD, bordercolor=DARK_PANEL,
-                    lightcolor=DARK_PANEL, darkcolor=DARK_BG)
+                    lightcolor=DARK_PANEL, darkcolor=DARK_BG, font=UI_FONT)
     style.configure("TFrame", background=DARK_BG)
-    style.configure("TLabel", background=DARK_BG, foreground=DARK_FG)
+    style.configure("TLabel", background=DARK_BG, foreground=DARK_FG, font=UI_FONT)
     style.configure("TCombobox", fieldbackground=DARK_FIELD, background=DARK_FIELD,
                     foreground=DARK_FG, arrowcolor=DARK_MUTED, bordercolor=DARK_PANEL,
-                    padding=(8, 6), relief="flat",
+                    padding=(11, 9), relief="flat", font=UI_FONT,
                     selectbackground=DARK_FIELD, selectforeground=DARK_FG)
     style.map("TCombobox",
               fieldbackground=[("readonly", DARK_FIELD), ("focus", DARK_FIELD),
@@ -621,17 +623,18 @@ def _apply_dark_theme(root) -> None:
     # ── Stili "minimal" per la barra configurazioni ──────────────────────────
     style.configure("Card.TFrame", background=DARK_PANEL)
     style.configure("Field.TLabel", background=DARK_PANEL, foreground=DARK_MUTED,
-                    font=("", 9))
-    style.configure("Muted.TLabel", background=DARK_BG, foreground=DARK_MUTED)
+                    font=UI_FONT_SM)
+    style.configure("Muted.TLabel", background=DARK_BG, foreground=DARK_MUTED,
+                    font=UI_FONT)
     style.configure("TButton", background=DARK_PANEL, foreground=DARK_FG,
-                    padding=(16, 7), relief="flat", borderwidth=0)
+                    padding=(20, 11), relief="flat", borderwidth=0, font=UI_FONT)
     style.map("TButton",
               background=[("active", DARK_FIELD), ("pressed", DARK_FIELD),
                           ("disabled", DARK_BG)],
               foreground=[("disabled", DARK_MUTED)])
     style.configure("Accent.TButton", background=DARK_ACCENT, foreground="#ffffff",
-                    padding=(20, 7), relief="flat", borderwidth=0,
-                    focuscolor=DARK_ACCENT)
+                    padding=(24, 11), relief="flat", borderwidth=0,
+                    focuscolor=DARK_ACCENT, font=UI_FONT)
     style.map("Accent.TButton",
               background=[("active", "#2f6fd0"), ("pressed", "#2a63bb"),
                           ("disabled", DARK_FIELD)],
@@ -641,6 +644,7 @@ def _apply_dark_theme(root) -> None:
     root.option_add("*TCombobox*Listbox.foreground", DARK_FG)
     root.option_add("*TCombobox*Listbox.selectBackground", DARK_ACCENT)
     root.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
+    root.option_add("*TCombobox*Listbox.font", UI_FONT)
 
 
 def draw_scene(ax, inner, title: str) -> None:
@@ -809,8 +813,8 @@ def build_gui(root, dm, fps: float = 15.0) -> None:
     root.columnconfigure(0, weight=1)
 
     # Barra-configurazioni come "card" (pannello più chiaro, staccato dai bordi).
-    ctrl = ttk.Frame(root, style="Card.TFrame", padding=(18, 14))
-    ctrl.grid(row=0, column=0, sticky="ew", padx=14, pady=(14, 8))
+    ctrl = ttk.Frame(root, style="Card.TFrame", padding=(26, 22))
+    ctrl.grid(row=0, column=0, sticky="ew", padx=14, pady=(16, 10))
     ctrl.columnconfigure(5, weight=1)     # spacer: spinge i bottoni a destra
 
     ver_var = tk.StringVar(value=DEFAULTS["version"])
@@ -823,11 +827,11 @@ def build_gui(root, dm, fps: float = 15.0) -> None:
         """Un campo = etichetta minuscola in alto + menu a tendina sotto, come celle
         affiancate nella barra. Ritorna (cella, combobox)."""
         cell = ttk.Frame(ctrl, style="Card.TFrame")
-        cell.grid(row=0, column=col, padx=(0, 22), sticky="w")
+        cell.grid(row=0, column=col, padx=(0, 32), sticky="w")
         ttk.Label(cell, text=label.upper(), style="Field.TLabel").pack(anchor="w")
         cb = ttk.Combobox(cell, textvariable=var, values=values, state="readonly",
-                          width=11)
-        cb.pack(anchor="w", pady=(4, 0))
+                          width=13)
+        cb.pack(anchor="w", pady=(7, 0))
         return cell, cb
 
     # v_max coperti: singola/doppia 0.1–5; FCM = passo v_max*10; no-ring solo <=2.
@@ -835,7 +839,7 @@ def build_gui(root, dm, fps: float = 15.0) -> None:
 
     # Cella MODELS: 4 checkbox (2x2), etichette col colore della rispettiva traiettoria.
     models_cell = ttk.Frame(ctrl, style="Card.TFrame")
-    models_cell.grid(row=0, column=0, padx=(0, 26), sticky="w")
+    models_cell.grid(row=0, column=0, padx=(0, 36), sticky="w")
     ttk.Label(models_cell, text="MODELS", style="Field.TLabel").grid(
         row=0, column=0, columnspan=2, sticky="w")
     model_checks = []
@@ -844,8 +848,8 @@ def build_gui(root, dm, fps: float = 15.0) -> None:
                              onvalue=True, offvalue=False, bg=DARK_PANEL, fg=color,
                              selectcolor=DARK_FIELD, activebackground=DARK_PANEL,
                              activeforeground=color, highlightthickness=0, bd=0,
-                             font=("", 10), anchor="w")
-        chk.grid(row=1 + i // 2, column=i % 2, sticky="w", padx=(0, 12), pady=(2, 0))
+                             font=UI_FONT, anchor="w")
+        chk.grid(row=1 + i // 2, column=i % 2, sticky="w", padx=(0, 18), pady=(5, 0))
         model_checks.append(chk)
 
     ver_cell, ver_cb = field(1, "Wind", ver_var, VERSIONS)
@@ -884,7 +888,7 @@ def build_gui(root, dm, fps: float = 15.0) -> None:
     cancel_btn.grid(row=1, column=1, pady=(4, 0))
 
     status = ttk.Label(root, text="Ready — choose the options and press Start.",
-                       style="Muted.TLabel", padding=(16, 6))
+                       style="Muted.TLabel", padding=(18, 12))
     status.grid(row=2, column=0, sticky="w")
 
     state = {"agents": [], "running": False, "steps": 0, "dm": dm,
