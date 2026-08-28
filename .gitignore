@@ -55,3 +55,6 @@ venv/
 *.fls
 *.fdb_latexmk
 *.log
+
+# Paper del relatore (non pubblico)
+thesis/OCEANS_*.pdf
