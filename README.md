@@ -54,10 +54,12 @@ scenario. Press **Start** again for a new scenario.
   (`inference`, `explainability`) and the live app (`live_sim`).
 - `utils/` — environment, data loading, and video generation (`video_generator`,
   with a standalone CLI: `python utils/video_generator.py batch all`).
-- `thesis/` — thesis deliverables: LaTeX source (`.zip`), the three PDF/A files
-  (thesis, abstract, index) and all report PDFs (`reports/`).
-- `deliverables/` — figures, tables and the comparison videos (`videos/v0|v1|v2/`).
-- `evaluations/` — held-out **analysis plots** and **lean** result files
-  (`episodes_data_lean.json`); per-episode plots and full JSONs stay local.
+- `Master Thesis/` — everything thesis-related, grouped together:
+  - `thesis/` — deliverables: LaTeX source (`.zip`), the three PDF/A files
+    (thesis, abstract, index) and all report PDFs (`reports/`).
+  - `deliverables/` — figures, tables and the comparison videos (`videos/v0|v1|v2/`).
+  - `evaluations/` — held-out **analysis plots** and **lean** result files
+    (`episodes_data_lean.json`); per-episode plots and full JSONs stay local.
+  - `thesis_workspace/` — LaTeX working dir, images and sources (local only).
 - `data/`, `trained_models/` — large assets kept out of git (fetched by the
   launcher / distributed via GitHub Release).

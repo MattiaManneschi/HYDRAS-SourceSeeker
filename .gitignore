@@ -5,14 +5,14 @@ data/
 trained_models/
 
 # ── Working dir della tesi + archivio: solo locali ───────────────────────────
-thesis_workspace/
+Master Thesis/thesis_workspace/
 .archive/
 template_latex_mem/
 
 # ── Valutazioni: si tracciano SOLO i plot di analisi + i JSON "lean". ────────
 #    I plot per-episodio (SRCxxx/) e i JSON completi restano in locale.
-evaluations/**/SRC*/
-evaluations/**/episodes_data.json
+Master Thesis/evaluations/**/SRC*/
+Master Thesis/evaluations/**/episodes_data.json
 
 # ── Python cache ─────────────────────────────────────────────────────────────
 __pycache__/
@@ -57,4 +57,4 @@ venv/
 *.log
 
 # Paper del relatore (non pubblico)
-thesis/OCEANS_*.pdf
+Master Thesis/thesis/OCEANS_*.pdf
