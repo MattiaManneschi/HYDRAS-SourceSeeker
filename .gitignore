@@ -9,6 +9,9 @@ Master Thesis/thesis_workspace/
 .archive/
 template_latex_mem/
 
+# ── Documento di sviluppo (linea guida + implementazione): solo locale ───────
+research_roadmap/
+
 # ── Valutazioni: si tracciano SOLO i plot di analisi + i JSON "lean". ────────
 #    I plot per-episodio (SRCxxx/) e i JSON completi restano in locale.
 Master Thesis/evaluations/**/SRC*/
